@@ -20,6 +20,7 @@ Exporters:
   - Name: session
   - Name: connect
   - Name: sessions_data
+  - Name: dbinfo
 
 
 # http-сервис который возвращает массив json с кредами к БД

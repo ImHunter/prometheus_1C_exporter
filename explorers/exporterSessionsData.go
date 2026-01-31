@@ -1,9 +1,6 @@
 package exporter
 
 import (
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
@@ -13,88 +10,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Структурированное хранение данных сессии, прочитанных из rac
-type sessionsData struct {
-	// Значения идентификаторов сессии ("base", "user" и т.п)
-	labelsData map[string]string
-	// Значения счетчиков сессии ("memorytotal" и т.п.)
-	metersData map[string]*int64
-}
-
-func (data *sessionsData) GetWithAll() prometheus.Labels {
-	names := []string{}
-	for k := range data.labelsData {
-		names = append(names, k)
-	}
-	return data.GetWith(names...)
-}
-
-func (data *sessionsData) GetWith(names ...string) prometheus.Labels {
-	getWith := make(prometheus.Labels)
-	for _, lb := range names {
-		getWith[lb] = data.labelsData[lb]
-	}
-	return getWith
-}
-
-// Типы данных счетчика
-type meterDataType string
-
-const (
-	// Будет работать аналогично MeterDataNumber. Авто-определение не предусмотрено.
-	MeterDataUndefined meterDataType = ""
-	// Числовой счетчик
-	MeterDataNumber meterDataType = "Number"
-	// Счетчик по дате. Будет выдавать дату в Unix-дате
-	MeterDataUnixDate meterDataType = "UnixDate"
-	// Счетчик по дате. Разница между датой-временем наблюдения и датой-временем из данных поля, в секундах.
-	MeterDataDuration meterDataType = "Duration"
-)
-
-// Описание счетчика
-type MeterParams struct {
-	// Наименование счетчика. Используется в метках и/или именах гистограмм.
-	Name string
-	// Описание счетчика. Используется в описании гистограммы.
-	Description string
-	// Имя поля, по которому значение счетчика вычитывается из данных сессии
-	SourceField string
-	// Опциональные дополнительные поля. Для единичных случаев (и платформ), когда наименование счетчика в данных rac может быть другим.
-	// См. https://bugboard.v8.1c.ru/error/000150161
-	OtherSourceFields []string
-	// Как применять значение счетчика.
-	// Данные счетчиков обновляются с каждым чтением из rac. ApplyMax регулирует, как использовать новое значение счетчика.
-	// При true, новое значение заменит старое, только если новое больше старого.
-	// При false новое значение всегда перетирает старое. В основном применяется для растущих счетчиков *total
-	ApplyMax bool
-	// Тип данных счетчика. По умолчанию MeterDataUndefined.
-	DataType meterDataType
-}
-
-func (mp *MeterParams) setName(paramName string) *MeterParams {
-	mp.Name = paramName
-	return mp
-}
-
-func (mp *MeterParams) setOtherSourceFields(otherSourceFields []string) *MeterParams {
-	mp.OtherSourceFields = otherSourceFields
-	return mp
-}
-
-func (mp *MeterParams) setDataType(dataType meterDataType) *MeterParams {
-	mp.DataType = dataType
-	return mp
-}
-
-type MeterParamsCollection []*MeterParams
-type bufferedData map[string]*sessionsData
-
 type ExporterSessionsData struct {
 	ExporterSessions
 
-	buff        bufferedData
-	meterParams MeterParamsCollection
-	histograms  map[string]*prometheus.HistogramVec
+	histograms map[string]*prometheus.HistogramVec
 }
 
 var localTimeLocation *time.Location
@@ -141,9 +60,9 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 		}
 	}
 
-	exp.buff = bufferedData{}
+	exp.buff = rasDataCollection{}
 	exp.settings = s
-	exp.ExporterCheckSheduleJob.settings = s
+	exp.ExporterInfobaseInfo.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
 	go exp.fillBaseList() // в данном экспортере нужен список баз
 
@@ -159,7 +78,7 @@ func (exp *ExporterSessionsData) collectMetrics(delay time.Duration) {
 	for {
 		ses, _ := exp.getSessions()
 		for _, item := range ses {
-			exp.loadSessionsItem(&item)
+			exp.loadRasRow(&item)
 		}
 
 		select {
@@ -168,13 +87,6 @@ func (exp *ExporterSessionsData) collectMetrics(delay time.Duration) {
 			return
 		}
 	}
-}
-
-func atoi(n string) *int64 {
-	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
-		return &v
-	}
-	return nil
 }
 
 func (exp *ExporterSessionsData) getValue() {
@@ -271,96 +183,30 @@ func (exp *ExporterSessionsData) GetType() model.MetricType {
 	return model.TypeRAC
 }
 
-func newSessionsDataExt() *sessionsData {
-	sd := sessionsData{
-		labelsData: make(map[string]string),
-		metersData: make(map[string]*int64),
-	}
-	return &sd
-}
+func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 
-func (exp *ExporterSessionsData) loadSessionsItem(racDataItem *map[string]string) *sessionsData {
+	lv := newLabeledValues()
 
-	var readedVal *int64
-	var existingVal *int64
+	lv.labelsData["appid"] = (*rasRowItem)["app-id"]
+	lv.labelsData["user"] = (*rasRowItem)["user-name"]
+	lv.labelsData["id"] = (*rasRowItem)["session-id"]
+	lv.labelsData["base"] = exp.findBaseName((*rasRowItem)["infobase"])
 
-	sessionsData := newSessionsDataExt()
-	sessionid := (*racDataItem)["session-id"]
-
-	sessionsData.labelsData["appid"] = (*racDataItem)["app-id"]
-	sessionsData.labelsData["user"] = (*racDataItem)["user-name"]
-	sessionsData.labelsData["id"] = sessionid
-	sessionsData.labelsData["base"] = exp.findBaseName((*racDataItem)["infobase"])
-
-	for _, mp := range exp.meterParams {
-		readedVal = mp.readValue(racDataItem)
-		if readedVal != nil {
-			sessionsData.metersData[mp.Name] = readedVal
-		}
-	}
+	lv.readMeterValues(rasRowItem, exp.meterParams)
 
 	exp.mx.Lock()
+	defer exp.mx.Unlock()
 
-	bufferData := exp.buff[sessionid]
-	if bufferData == nil {
-		exp.buff[sessionid] = sessionsData
-		bufferData = sessionsData
-	} else {
-		for _, p := range exp.meterParams {
-			existingVal = bufferData.metersData[p.Name]
-			readedVal = sessionsData.metersData[p.Name]
-			if readedVal == nil || (readedVal != nil && existingVal != nil && *readedVal == *existingVal) {
-				continue
-			}
-			if existingVal == nil || !p.ApplyMax {
-				if existingVal == nil {
-					bufferData.metersData[p.Name] = new(int64)
-				}
-				*bufferData.metersData[p.Name] = *readedVal
-				continue
-			}
-			if *readedVal > *existingVal {
-				*bufferData.metersData[p.Name] = *readedVal
-			}
-		}
-		clear(sessionsData.labelsData)
-		clear(sessionsData.metersData)
-		sessionsData = nil
-	}
-
-	exp.mx.Unlock()
-
-	return bufferData
+	lv.writeToBuf(exp.buff, exp.meterParams, "id")
 
 }
 
-func (exp *ExporterSessionsData) usedSummary(s *settings.Settings) bool {
-	return slices.Contains(s.MetricKinds.SessionsData, settings.KindSummary)
-}
-
-func (exp *ExporterSessionsData) usedHistogram(s *settings.Settings) bool {
-	return slices.Contains(s.MetricKinds.SessionsData, settings.KindNativeHistogram)
+func (exp *ExporterSessionsData) getMetricKinds(s *settings.Settings) []settings.TypeMetricKind {
+	return s.MetricKinds.SessionsData
 }
 
 func (exp *ExporterSessionsData) usedExemplars() bool {
 	return exp.settings.Other.UseExemplars
-}
-
-func (allParams *MeterParamsCollection) add(sourceField string, description string, applyMax bool) *MeterParams {
-
-	mp := MeterParams{
-		Description: description,
-		SourceField: sourceField,
-		ApplyMax:    applyMax,
-		DataType:    MeterDataUndefined,
-	}
-	mp.Name = sourceField
-	mp.Name = strings.ReplaceAll(mp.Name, "-", "")
-	mp.Name = strings.ReplaceAll(mp.Name, " ", "")
-
-	*allParams = append(*allParams, &mp)
-
-	return &mp
 }
 
 func (exp *ExporterSessionsData) initAllMeterParams() {
@@ -397,44 +243,7 @@ func (exp *ExporterSessionsData) initAllMeterParams() {
 
 }
 
-func (mp *MeterParams) readValue(item *map[string]string) *int64 {
-
-	var txt string
-	var retVal int64
-
-	txt = (*item)[mp.SourceField]
-	if txt == "" && len(mp.OtherSourceFields) != 0 {
-		for _, fn := range mp.OtherSourceFields {
-			txt = (*item)[fn]
-			if txt != "" {
-				break
-			}
-		}
-	}
-
-	if txt == "" {
-		return nil
-	}
-
-	if mp.DataType == MeterDataDuration || mp.DataType == MeterDataUnixDate {
-		st, e := time.ParseInLocation("2006-01-02T15:04:05", txt, localTimeLocation)
-		if e == nil {
-			if mp.DataType == MeterDataDuration {
-				retVal = int64(time.Since(st).Seconds())
-			} else {
-				retVal = st.Unix()
-			}
-		} else {
-			return nil
-		}
-	} else {
-		return atoi(txt)
-	}
-
-	return &retVal
-}
-
-func findExemplars(d *bufferedData) ExemplarChecker {
+func findExemplars(d *rasDataCollection) ExemplarChecker {
 
 	// Пока решено, что экземплярами по счетчикам будут сессии, где обнаружено максимальное значение
 
@@ -470,7 +279,7 @@ func findExemplars(d *bufferedData) ExemplarChecker {
 type ExemplarChecker struct {
 	keys   map[string]map[string]string
 	values map[string]map[string]int64
-	data   *bufferedData
+	data   *rasDataCollection
 }
 
 func (finder *ExemplarChecker) isExemplar(sess string, base string, appid string, param string) bool {

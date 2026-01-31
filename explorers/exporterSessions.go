@@ -17,7 +17,7 @@ import (
 )
 
 type ExporterSessions struct {
-	ExporterCheckSheduleJob
+	ExporterInfobaseInfo
 
 	mx    sync.RWMutex
 	cache *expirable.LRU[string, []map[string]string]
@@ -55,7 +55,7 @@ func (exp *ExporterSessions) Construct(s *settings.Settings) *ExporterSessions {
 	}
 
 	exp.settings = s
-	exp.ExporterCheckSheduleJob.settings = s
+	exp.ExporterInfobaseInfo.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
 
 	go exp.fillBaseList()
@@ -161,9 +161,19 @@ func (exp *ExporterSessions) GetType() model.MetricType {
 }
 
 func (exp *ExporterSessions) usedSummary(s *settings.Settings) bool {
-	return slices.Contains(s.MetricKinds.Session, settings.KindSummary)
+	return slices.Contains(exp.getMetricKinds(s), settings.KindSummary)
 }
 
 func (exp *ExporterSessions) usedGauge(s *settings.Settings) bool {
-	return slices.Contains(s.MetricKinds.Session, settings.KindGauge)
+	return slices.Contains(exp.getMetricKinds(s), settings.KindGauge)
+}
+
+func (exp *ExporterSessions) usedHistogram(s *settings.Settings) bool {
+	return slices.Contains(exp.getMetricKinds(s), settings.KindGauge)
+}
+
+// Возвращает настройки видов метрик экспортера. Для других видов экспортеров требуется переопределить,
+// чтобы методы usedSummary, usedGauge, usedHistogram корректно работали.
+func (exp *ExporterSessions) getMetricKinds(s *settings.Settings) []settings.TypeMetricKind {
+	return s.MetricKinds.Session
 }

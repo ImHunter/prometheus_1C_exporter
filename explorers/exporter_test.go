@@ -206,7 +206,7 @@ func Test_Exporter(t *testing.T) {
 		exp.summary = summaryMock
 		exp.clusterID = "123"
 
-		sessData := new(sessionsData)
+		sessData := new(labeledValues)
 		sessData.labelsData = map[string]string{
 			"basename":  "test",
 			"user":      "test",
@@ -229,7 +229,7 @@ func Test_Exporter(t *testing.T) {
 			"callsall":            atoi("3432"),
 		}
 
-		exp.buff = map[string]*sessionsData{
+		exp.buff = map[string]*labeledValues{
 			"1": sessData,
 		}
 		exp.mx.Unlock()

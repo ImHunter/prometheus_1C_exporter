@@ -16,7 +16,7 @@ import (
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/prometheus/client_golang/prometheus"
 
-	exp "github.com/LazarenkoA/prometheus_1C_exporter/explorers"
+	expl "github.com/LazarenkoA/prometheus_1C_exporter/explorers"
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
 	"github.com/judwhite/go-svc"
@@ -25,7 +25,7 @@ import (
 
 type app struct {
 	settings    *settings.Settings
-	metric      *exp.Metrics
+	metric      *expl.Metrics
 	httpSrv     *http.Server
 	port        string
 	ctx         context.Context
@@ -35,24 +35,27 @@ type app struct {
 }
 
 func (a *app) Init(_ svc.Environment) (err error) {
-	a.metric = new(exp.Metrics).FillMetrics(a.settings)
+	a.metric = new(expl.Metrics).FillMetrics(a.settings)
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	a.osRegistry = prometheus.NewRegistry()
 	a.racRegistry = prometheus.NewRegistry()
 
-	lic := new(exp.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
-	perf := new(exp.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
-	sJob := new(exp.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
-	ses := new(exp.ExporterSessions).Construct(a.settings)              // Сеансы
-	conn := new(exp.ExporterConnects).Construct(a.settings)             // Соединения
-	currentMem := new(exp.ExporterSessionsData).Construct(a.settings)   // Текущая память сеанса
-	cpu := new(exp.CPU).Construct(a.settings)                           // CPU
-	proc := new(exp.Processes).Construct(a.settings)                    // Данные CPU/память в разрезе процессов
-	disk := new(exp.ExporterDisk).Construct(a.settings)                 // Диск
+	lic := new(expl.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
+	perf := new(expl.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
+	sJob := new(expl.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
+	iin := new(expl.ExporterInfobaseInfo).Construct(a.settings)          // Информация о запретах в информационной базе
+	ses := new(expl.ExporterSessions).Construct(a.settings)              // Сеансы
+	conn := new(expl.ExporterConnects).Construct(a.settings)             // Соединения
+	currentMem := new(expl.ExporterSessionsData).Construct(a.settings)   // Текущая память сеанса
+	cpu := new(expl.CPU).Construct(a.settings)                           // CPU
+	proc := new(expl.Processes).Construct(a.settings)                    // Данные CPU/память в разрезе процессов
+	disk := new(expl.ExporterDisk).Construct(a.settings)                 // Диск
 
-	a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn)
+	a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn, iin)
 	a.initHTTP()
+
+	expl.InitReaders()
 
 	return nil
 }
@@ -61,11 +64,11 @@ func (a *app) Start() error {
 	logger.DefaultLogger.Info("Запущен сбор метрик: ", strings.Join(a.metric.Metrics, ","))
 	fmt.Println("port :", a.port)
 
-	if a.metric.Contains("shedule_job") && (a.settings.DBCredentials == nil || a.settings.DBCredentials.URL == "") {
-		return errors.New("для метрики \"shedule_job\" обязательно должен быть заполнен параметр DBCredentials")
-	}
+	// if a.metric.Contains("shedule_job") && (a.settings.DBCredentials == nil || a.settings.DBCredentials.URL == "") {
+	// 	return errors.New("для метрики \"shedule_job\" обязательно должен быть заполнен параметр DBCredentials")
+	// }
 
-	go a.settings.GetDBCredentials(a.ctx, exp.CForce)
+	go a.settings.GetDBCredentials(a.ctx, expl.CForce)
 	go a.reloadWatcher()
 
 	a.register()
@@ -120,8 +123,8 @@ func (a *app) initHTTP() {
 	siteMux.Handle("/metrics", promhttp.Handler())
 	siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
 	siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
-	siteMux.Handle("/Continue", exp.Continue(a.metric))
-	siteMux.Handle("/Pause", exp.Pause(a.metric))
+	siteMux.Handle("/Continue", expl.Continue(a.metric))
+	siteMux.Handle("/Pause", expl.Pause(a.metric))
 
 	siteMux.HandleFunc("/debug/pprof/", pprof.Index)
 	siteMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
