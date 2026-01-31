@@ -25,7 +25,7 @@ func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings) *ExporterChe
 	)
 
 	exp.settings = s
-	exp.buff = rasDataCollection{}
+	exp.buff = labeledValuesCollection{}
 	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 

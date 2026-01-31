@@ -60,7 +60,7 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 		}
 	}
 
-	exp.buff = rasDataCollection{}
+	exp.buff = labeledValuesCollection{}
 	exp.settings = s
 	exp.ExporterInfobaseInfo.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
@@ -243,7 +243,7 @@ func (exp *ExporterSessionsData) initAllMeterParams() {
 
 }
 
-func findExemplars(d *rasDataCollection) ExemplarChecker {
+func findExemplars(d *labeledValuesCollection) ExemplarChecker {
 
 	// Пока решено, что экземплярами по счетчикам будут сессии, где обнаружено максимальное значение
 
@@ -279,7 +279,7 @@ func findExemplars(d *rasDataCollection) ExemplarChecker {
 type ExemplarChecker struct {
 	keys   map[string]map[string]string
 	values map[string]map[string]int64
-	data   *rasDataCollection
+	data   *labeledValuesCollection
 }
 
 func (finder *ExemplarChecker) isExemplar(sess string, base string, appid string, param string) bool {

@@ -20,7 +20,7 @@ type ExporterInfobaseInfo struct {
 
 	mx          sync.RWMutex
 	meterParams MeterParamsCollection
-	buff        rasDataCollection
+	buff        labeledValuesCollection
 }
 
 var (
@@ -43,7 +43,7 @@ func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings) *ExporterInfoba
 	)
 
 	exp.settings = s
-	exp.buff = rasDataCollection{}
+	exp.buff = labeledValuesCollection{}
 	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 

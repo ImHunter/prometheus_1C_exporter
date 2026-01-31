@@ -75,13 +75,11 @@ func (mp *MeterParams) getReader() ValueReader {
 	return mp.reader
 }
 
-// Основной метод чтения значения
 func (mp *MeterParams) readValue(item *map[string]string) *int64 {
 	return mp.getReader()(item, mp)
 }
 
-// Вспомогательный метод для извлечения значения
-func (mp *MeterParams) extractValue(item *map[string]string) string {
+func (mp *MeterParams) extractTextValue(item *map[string]string) string {
 	// Пробуем основное поле
 	if val := (*item)[mp.SourceField]; val != "" {
 		return val
@@ -122,52 +120,7 @@ func (allParams *MeterParamsCollection) add(sourceField string, description stri
 	return &mp
 }
 
-// func (mp *MeterParams) readValue(item *map[string]string) *int64 {
-
-// 	var txt string
-// 	var retVal int64
-
-// 	txt = strings.ToLower((*item)[mp.SourceField])
-// 	if txt == "" && len(mp.OtherSourceFields) != 0 {
-// 		for _, fn := range mp.OtherSourceFields {
-// 			txt = (*item)[fn]
-// 			if txt != "" {
-// 				break
-// 			}
-// 		}
-// 	}
-
-// 	if txt == "" {
-// 		return nil
-// 	}
-
-// 	if mp.DataType == MeterDataDuration || mp.DataType == MeterDataUnixDate {
-// 		st, e := time.ParseInLocation("2006-01-02T15:04:05", txt, localTimeLocation)
-// 		if e == nil {
-// 			if mp.DataType == MeterDataDuration {
-// 				retVal = int64(time.Since(st).Seconds())
-// 			} else {
-// 				retVal = st.Unix()
-// 			}
-// 		} else {
-// 			return nil
-// 		}
-// 	} else if mp.DataType == MeterDataOnOff {
-// 		if txt == "off" {
-// 			retVal = 0
-// 		} else if txt == "on" {
-// 			retVal = 1
-// 		} else {
-// 			return nil
-// 		}
-// 	} else {
-// 		return atoi(txt)
-// 	}
-
-// 	return &retVal
-// }
-
-// Type alias для функции чтения
+// alias для функции чтения
 type ValueReader func(item *map[string]string, mp *MeterParams) *int64
 
 // Глобальный реестр функций чтения (инициализируется один раз)
@@ -192,11 +145,9 @@ func InitReaders() {
 	})
 }
 
-// Фабричные методы для создания функций (вызываются один раз)
-
 func createNumberReader() ValueReader {
 	return func(item *map[string]string, mp *MeterParams) *int64 {
-		txt := mp.extractValue(item)
+		txt := mp.extractTextValue(item)
 		if txt == "" {
 			return nil
 		}
@@ -207,7 +158,7 @@ func createNumberReader() ValueReader {
 
 func createUnixDateReader() ValueReader {
 	return func(item *map[string]string, mp *MeterParams) *int64 {
-		txt := mp.extractValue(item)
+		txt := mp.extractTextValue(item)
 		if txt == "" {
 			return nil
 		}
@@ -222,7 +173,7 @@ func createUnixDateReader() ValueReader {
 
 func createDurationReader() ValueReader {
 	return func(item *map[string]string, mp *MeterParams) *int64 {
-		txt := mp.extractValue(item)
+		txt := mp.extractTextValue(item)
 		if txt == "" {
 			return nil
 		}
@@ -230,7 +181,6 @@ func createDurationReader() ValueReader {
 		if err != nil {
 			return nil
 		}
-		// Можно добавить опциональную логику для referenceTime
 		retVal := int64(time.Since(t).Seconds())
 		return &retVal
 	}
@@ -239,7 +189,7 @@ func createDurationReader() ValueReader {
 func createOnOffReader() ValueReader {
 	return func(item *map[string]string, mp *MeterParams) *int64 {
 		retVal := new(int64)
-		txt := strings.ToLower(mp.extractValue(item))
+		txt := strings.ToLower(mp.extractTextValue(item))
 		switch txt {
 		case "on":
 			*retVal = 1
@@ -254,12 +204,13 @@ func createOnOffReader() ValueReader {
 
 // Структурированное хранение данных сессии, прочитанных из rac
 type labeledValues struct {
-	// Значения идентификаторов сессии ("base", "user" и т.п)
+	// Значения идентификаторов (меток)
 	labelsData map[string]string
-	// Значения счетчиков сессии ("memorytotal" и т.п.)
+	// Значения счетчиков ("memorytotal" и т.п.)
 	metersData map[string]*int64
 }
 
+// Конструктор для labeledValues
 func newLabeledValues() *labeledValues {
 	sd := labeledValues{
 		labelsData: make(map[string]string),
@@ -294,7 +245,7 @@ func (lv *labeledValues) readMeterValues(rasRowItem *map[string]string, meterPar
 	}
 }
 
-func (lv *labeledValues) writeToBuf(buff rasDataCollection, meterParams MeterParamsCollection, keyLabel string) {
+func (lv *labeledValues) writeToBuf(buff labeledValuesCollection, meterParams MeterParamsCollection, keyLabel string) {
 
 	var readedVal *int64
 	var existingVal *int64
@@ -329,7 +280,8 @@ func (lv *labeledValues) writeToBuf(buff rasDataCollection, meterParams MeterPar
 	}
 }
 
-type rasDataCollection map[string]*labeledValues
+// Тип для хранения коллекции данных, прочитанных из ras
+type labeledValuesCollection map[string]*labeledValues
 
 func atoi(n string) *int64 {
 	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
