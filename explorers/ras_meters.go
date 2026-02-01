@@ -123,13 +123,16 @@ func (allParams *MeterParamsCollection) add(sourceField string, description stri
 // alias для функции чтения
 type ValueReader func(item *map[string]string, mp *MeterParams) *int64
 
-// Глобальный реестр функций чтения (инициализируется один раз)
 var (
+	// Глобальный реестр функций чтения (инициализируется один раз)
 	readerRegistry     map[meterDataType]ValueReader
 	readerRegistryOnce sync.Once
 	defaultReader      ValueReader
+	// Локальная временная зона
+	localTimeLocation *time.Location
 )
 
+// Инициализация ридеров
 func InitReaders() {
 	readerRegistryOnce.Do(func() {
 		readerRegistry = make(map[meterDataType]ValueReader)
@@ -142,6 +145,9 @@ func InitReaders() {
 
 		// Ридер по умолчанию или для неизвестных типов
 		defaultReader = readerRegistry[MeterDataNumber]
+
+		// Локальная временная зона, для прочитывания времени
+		localTimeLocation, _ = time.LoadLocation("Local")
 	})
 }
 

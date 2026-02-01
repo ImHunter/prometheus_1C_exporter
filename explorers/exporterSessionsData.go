@@ -16,11 +16,7 @@ type ExporterSessionsData struct {
 	histograms map[string]*prometheus.HistogramVec
 }
 
-var localTimeLocation *time.Location
-
 func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessionsData {
-
-	localTimeLocation, _ = time.LoadLocation("Local")
 
 	exp.BaseExporter = newBase(exp.GetName())
 	exp.logger.Info("Создание объекта")
