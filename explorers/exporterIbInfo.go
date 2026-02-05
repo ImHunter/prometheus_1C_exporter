@@ -43,7 +43,7 @@ func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings) *ExporterInfoba
 	)
 
 	exp.settings = s
-	exp.buff = labeledValuesCollection{}
+	exp.buff = newLabeledValuesCollection("guid")
 	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 
@@ -55,27 +55,25 @@ func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings) *ExporterInfoba
 
 func (exp *ExporterInfobaseInfo) initAllMeterParams() {
 	params := &(exp.meterParams)
-	params.add("scheduled-jobs-deny", "Запрет регламентных заданий", false).setDataType(MeterDataOnOff)
-	params.add("sessions-deny", "Запрет начала сеансов", false).setDataType(MeterDataOnOff)
+	params.add("scheduled-jobs-deny", "Запрет регламентных заданий", ApplyMethodSet).setDataType(MeterDataOnOff)
+	params.add("sessions-deny", "Запрет начала сеансов", ApplyMethodSet).setDataType(MeterDataOnOff)
 }
 
 func (exp *ExporterInfobaseInfo) getValue() {
 	exp.logger.Info("получение данных экспортера")
 
+	exp.gauge.Reset()
 	if err := exp.getData(); err == nil {
-		for _, lv := range exp.buff {
+		for _, lv := range exp.buff.dataMap {
 			for _, mp := range exp.meterParams {
 				with := lv.GetWith("base")
 				with["datatype"] = mp.Name
 				exp.gauge.With(with).Set(float64(*lv.metersData[mp.Name]))
 			}
 		}
-		for k := range exp.buff {
-			delete(exp.buff, k)
-		}
+		exp.buff.clear()
 
 	} else {
-		exp.gauge.Reset()
 		exp.logger.Error(err)
 	}
 }
@@ -104,7 +102,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
 					lv.readMeterValues(&baseinfo, exp.meterParams)
-					lv.writeToBuf(exp.buff, exp.meterParams, "guid")
+					lv.writeToBuf(exp.buff, exp.meterParams)
 					db.lv = *lv
 					chanOut <- db
 				} else {

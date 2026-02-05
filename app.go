@@ -41,6 +41,8 @@ func (a *app) Init(_ svc.Environment) (err error) {
 	a.osRegistry = prometheus.NewRegistry()
 	a.racRegistry = prometheus.NewRegistry()
 
+	expl.InitMeterFunctions()
+
 	lic := new(expl.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
 	perf := new(expl.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
 	sJob := new(expl.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
@@ -54,8 +56,6 @@ func (a *app) Init(_ svc.Environment) (err error) {
 
 	a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn, iin)
 	a.initHTTP()
-
-	expl.InitReaders()
 
 	return nil
 }

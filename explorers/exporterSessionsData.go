@@ -56,7 +56,7 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 		}
 	}
 
-	exp.buff = labeledValuesCollection{}
+	exp.buff = newLabeledValuesCollection("id")
 	exp.settings = s
 	exp.ExporterInfobaseInfo.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
@@ -101,7 +101,7 @@ func (exp *ExporterSessionsData) getValue() {
 
 	if exp.usedHistogram(exp.settings) {
 		if exp.usedExemplars() {
-			exemplarChecker = findExemplars(&exp.buff)
+			exemplarChecker = newExemplarChecker(&exp.buff, "base")
 			usedExemplars = true
 		}
 		for _, h := range exp.histograms {
@@ -109,12 +109,12 @@ func (exp *ExporterSessionsData) getValue() {
 		}
 	}
 
-	for k, v := range exp.buff {
+	for k, lv := range exp.buff.dataMap {
 
 		if exp.usedSummary(exp.settings) {
-			with = v.GetWithAll()
-			with["id"] = k
-			for n, m := range v.metersData {
+			with = lv.GetWithAll()
+			with["id"] = k[0]
+			for n, m := range lv.metersData {
 				if m == nil {
 					continue
 				}
@@ -124,14 +124,14 @@ func (exp *ExporterSessionsData) getValue() {
 		}
 
 		if exp.usedHistogram(exp.settings) {
-			withLabel := v.GetWith("base", "appid")
-			withExemplar := v.GetWith("id", "user")
-			for n, m := range v.metersData {
+			withLabel := lv.GetWith("base", "appid")
+			withExemplar := lv.GetWith("id", "user")
+			for n, m := range lv.metersData {
 				if m == nil {
 					continue
 				}
 				hist := exp.histograms[n]
-				if usedExemplars && exemplarChecker.isExemplar(k, v.labelsData["base"], v.labelsData["appid"], n) {
+				if usedExemplars && exemplarChecker.isExemplar(*lv, n) {
 					hist.With(withLabel).(prometheus.ExemplarObserver).ObserveWithExemplar(float64(*m), withExemplar)
 				} else {
 					hist.With(withLabel).Observe(float64(*m))
@@ -139,14 +139,10 @@ func (exp *ExporterSessionsData) getValue() {
 			}
 		}
 
-		toDel := exp.buff[k]
-		clear(toDel.labelsData)
-		clear(toDel.metersData)
-		exp.buff[k] = nil
-		delete(exp.buff, k)
+		exp.buff.deleteByKey(k)
 
-		clear(exemplarChecker.keys)
-		clear(exemplarChecker.values)
+		// clear(exemplarChecker.keys)
+		// clear(exemplarChecker.values)
 
 	}
 }
@@ -193,7 +189,7 @@ func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
-	lv.writeToBuf(exp.buff, exp.meterParams, "id")
+	lv.writeToBuf(exp.buff, exp.meterParams)
 
 }
 
@@ -209,76 +205,32 @@ func (exp *ExporterSessionsData) initAllMeterParams() {
 
 	params := &(exp.meterParams)
 
-	params.add("memory-total", "Память (всего)", false)
-	params.add("memory-current", "Память (текущая)", true)
-	params.add("read-current", "Чтение (текущее)", true)
-	params.add("read-total", "Чтение (всего)", false)
-	params.add("write-current", "Запись (текущая)", true)
-	params.add("write-total", "Запись (всего)", false)
-	params.add("duration-current", "Время вызова (текущее)", true)
+	params.add("memory-total", "Память (всего)", ApplyMethodSet)
+	params.add("memory-current", "Память (текущая)", ApplyMethodMax)
+	params.add("read-current", "Чтение (текущее)", ApplyMethodMax)
+	params.add("read-total", "Чтение (всего)", ApplyMethodSet)
+	params.add("write-current", "Запись (текущая)", ApplyMethodMax)
+	params.add("write-total", "Запись (всего)", ApplyMethodSet)
+	params.add("duration-current", "Время вызова (текущее)", ApplyMethodMax)
 	// Устанавливается дополнительное поле в OtherSourceFields для совместимости со старой платформой.
 	// Ссылка на багборд https://bugboard.v8.1c.ru/error/000150161
-	params.add("duration-current-dbms", "Длительность текущего вызова СУБД", true).setOtherSourceFields([]string{"duration current-dbms"})
-	params.add("duration-all", "Общее время работы сессии", true)
-	params.add("duration-all-service", "Время работы сервисов кластера с начала сеанса или соединения", true)
-	params.add("duration-all-dbms", "Общее время выполнения операций в СУБД", true)
-	params.add("cpu-time-current", "Процессорное время (текущее)", true)
-	params.add("cpu-time-total", "Процессорное время (всего)", false)
-	params.add("dbms-bytes-all", "Объем данных, переданных из/в СУБД", true)
-	params.add("calls-all", "Количество вызовов (запросов) за все время", true)
-	params.add("blocked-by-ls", "Количество блокировок локального сервиса", true)
-	params.add("blocked-by-dbms", "Количество блокировок СУБД", true)
-	params.add("db-proc-took", "Время соединения СУБД", true)
-	params.add("db-proc-took-at", "Продолжительность соединения СУБД ", true).setName("dbproctookatduration").setDataType(MeterDataDuration)
-	params.add("started-at", "Длительность сеанса", true).setName("startedatduration").setDataType(MeterDataDuration)
-	params.add("started-at", "Начало сеанса", true).setDataType(MeterDataUnixDate)
-	params.add("last-active-at", "Прошло времени с последней активности сессии", true).setName("lastactiveatduration").setDataType(MeterDataDuration)
-	params.add("last-active-at", "Время последней активности сессии", true).setDataType(MeterDataUnixDate)
-	params.add("passive-session-hibernate-time", "Время в секундах бездействия до перевода сессии в спящий режим", true)
-	params.add("hibernate-session-terminate-time", "Время, через которое сессия завершается после перехода в спящий режим", true)
+	params.add("duration-current-dbms", "Длительность текущего вызова СУБД", ApplyMethodMax).setOtherSourceFields([]string{"duration current-dbms"})
+	params.add("duration-all", "Общее время работы сессии", ApplyMethodMax)
+	params.add("duration-all-service", "Время работы сервисов кластера с начала сеанса или соединения", ApplyMethodMax)
+	params.add("duration-all-dbms", "Общее время выполнения операций в СУБД", ApplyMethodMax)
+	params.add("cpu-time-current", "Процессорное время (текущее)", ApplyMethodMax)
+	params.add("cpu-time-total", "Процессорное время (всего)", ApplyMethodSet)
+	params.add("dbms-bytes-all", "Объем данных, переданных из/в СУБД", ApplyMethodSet)
+	params.add("calls-all", "Количество вызовов (запросов) за все время", ApplyMethodMax)
+	params.add("blocked-by-ls", "Количество блокировок локального сервиса", ApplyMethodMax)
+	params.add("blocked-by-dbms", "Количество блокировок СУБД", ApplyMethodMax)
+	params.add("db-proc-took", "Время соединения СУБД", ApplyMethodMax)
+	params.add("db-proc-took-at", "Продолжительность соединения СУБД ", ApplyMethodMax).setName("dbproctookatduration").setDataType(MeterDataDuration)
+	params.add("started-at", "Длительность сеанса", ApplyMethodMax).setName("startedatduration").setDataType(MeterDataDuration)
+	params.add("started-at", "Начало сеанса", ApplyMethodMax).setDataType(MeterDataUnixDate)
+	params.add("last-active-at", "Прошло времени с последней активности сессии", ApplyMethodMax).setName("lastactiveatduration").setDataType(MeterDataDuration)
+	params.add("last-active-at", "Время последней активности сессии", ApplyMethodMax).setDataType(MeterDataUnixDate)
+	params.add("passive-session-hibernate-time", "Время в секундах бездействия до перевода сессии в спящий режим", ApplyMethodMax)
+	params.add("hibernate-session-terminate-time", "Время, через которое сессия завершается после перехода в спящий режим", ApplyMethodMax)
 
-}
-
-func findExemplars(d *labeledValuesCollection) ExemplarChecker {
-
-	// Пока решено, что экземплярами по счетчикам будут сессии, где обнаружено максимальное значение
-
-	var maxVal int64
-	var base string
-
-	finder := ExemplarChecker{
-		data:   d,
-		keys:   make(map[string]map[string]string),
-		values: make(map[string]map[string]int64),
-	}
-
-	for sessId, sessData := range *finder.data {
-		base = sessData.labelsData["base"]
-		for paramId, paramVal := range sessData.metersData {
-
-			if finder.values[base] == nil {
-				finder.values[base] = make(map[string]int64)
-				finder.keys[base] = make(map[string]string)
-			}
-
-			maxVal = finder.values[base][paramId]
-			if *paramVal > maxVal {
-				finder.values[base][paramId] = *paramVal
-				finder.keys[base][paramId] = sessId
-			}
-		}
-	}
-
-	return finder
-}
-
-type ExemplarChecker struct {
-	keys   map[string]map[string]string
-	values map[string]map[string]int64
-	data   *labeledValuesCollection
-}
-
-func (finder *ExemplarChecker) isExemplar(sess string, base string, appid string, param string) bool {
-	targetSess := finder.keys[base][param]
-	return sess == targetSess
 }

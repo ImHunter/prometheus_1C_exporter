@@ -40,6 +40,7 @@ func (exp *ExporterClientLic) getValue() {
 
 	lic, _ := exp.getLic()
 	exp.logger.Debugf("количество лицензий %v", len(lic))
+	exp.summary.Reset()
 
 	if len(lic) > 0 {
 		group = map[string]int{}
@@ -51,13 +52,9 @@ func (exp *ExporterClientLic) getValue() {
 			group[key]++
 		}
 
-		exp.summary.Reset()
 		for k, v := range group {
 			exp.summary.WithLabelValues(exp.host, k).Observe(float64(v))
 		}
-
-	} else {
-		exp.summary.Reset()
 	}
 }
 

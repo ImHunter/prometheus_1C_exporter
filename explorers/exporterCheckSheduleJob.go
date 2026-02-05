@@ -25,7 +25,7 @@ func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings) *ExporterChe
 	)
 
 	exp.settings = s
-	exp.buff = labeledValuesCollection{}
+	exp.buff = newLabeledValuesCollection("guid")
 	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 
@@ -38,17 +38,14 @@ func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings) *ExporterChe
 func (exp *ExporterCheckSheduleJob) getValue() {
 	exp.logger.Info("получение данных экспортера")
 
+	exp.gauge.Reset()
 	if err := exp.getData(); err == nil {
-		//exp.gauge.Reset()
-		for _, lv := range exp.buff {
+		for _, lv := range exp.buff.dataMap {
 			exp.gauge.With(lv.GetWith("base")).Set(float64(*lv.metersData["scheduledjobsdeny"]))
 		}
-		for k := range exp.buff {
-			delete(exp.buff, k)
-		}
+		exp.buff.clear()
 
 	} else {
-		exp.gauge.Reset()
 		exp.logger.Error(err)
 	}
 }
