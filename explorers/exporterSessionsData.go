@@ -175,6 +175,7 @@ func (exp *ExporterSessionsData) getValue() {
 		// clear(exemplarChecker.values)
 
 	}
+	exp.buff.clear()
 }
 
 func (exp *ExporterSessionsData) Collect(ch chan<- prometheus.Metric) {

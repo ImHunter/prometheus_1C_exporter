@@ -121,7 +121,7 @@ func (exp *ExporterSessions) getValue() {
 			}
 		}
 	}
-
+	exp.buff.clear()
 }
 
 func (exp *ExporterSessions) getSessions() (sesData []map[string]string, err error) {

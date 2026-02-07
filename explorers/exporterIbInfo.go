@@ -70,11 +70,10 @@ func (exp *ExporterInfobaseInfo) getValue() {
 				exp.gauge.With(with).Set(float64(*lv.metersData[mp.Name]))
 			}
 		}
-		exp.buff.clear()
-
 	} else {
 		exp.logger.Error(err)
 	}
+	exp.buff.clear()
 }
 
 func (exp *ExporterInfobaseInfo) getData() (err error) {

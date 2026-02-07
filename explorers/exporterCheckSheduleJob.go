@@ -42,11 +42,10 @@ func (exp *ExporterCheckSheduleJob) getValue() {
 		for _, lv := range exp.buff.dataMap {
 			exp.gauge.With(lv.GetWith("base")).Set(float64(*lv.metersData["scheduledjobsdeny"]))
 		}
-		exp.buff.clear()
-
 	} else {
 		exp.logger.Error(err)
 	}
+	exp.buff.clear()
 }
 
 func (exp *ExporterCheckSheduleJob) Collect(ch chan<- prometheus.Metric) {
