@@ -118,7 +118,8 @@ func (exp *ExporterSessionsData) getValue() {
 
 	if exp.usedHistogram(exp.settings) {
 		if exp.usedExemplars() {
-			exemplarChecker = newExemplarChecker(&exp.buff, "base")
+			exemplarChecker = newExemplarChecker(&exp.buff)
+			exemplarChecker.findRandomExemplars(5)
 			usedExemplars = true
 		}
 		for _, h := range exp.histograms {
@@ -160,7 +161,7 @@ func (exp *ExporterSessionsData) getValue() {
 					continue
 				}
 				hist := exp.histograms[n]
-				if usedExemplars && exemplarChecker.isExemplar(*lv, n) {
+				if usedExemplars && exemplarChecker.isExemplar(lv, n) {
 					hist.With(withLabel).(prometheus.ExemplarObserver).ObserveWithExemplar(float64(*m), withExemplar)
 				} else {
 					hist.With(withLabel).Observe(float64(*m))

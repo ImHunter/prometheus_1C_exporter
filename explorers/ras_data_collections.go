@@ -2,6 +2,7 @@ package exporter
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -160,28 +161,51 @@ func (buff *labeledValuesCollection) createKey(lv *labeledValues) (labeledValues
 }
 
 type ExemplarChecker struct {
-	keys   map[string]map[string]string
-	values map[string]map[string]int64
-	data   *labeledValuesCollection
+	data *labeledValuesCollection
+	keys map[labeledValuesMapKey]map[string]bool
 }
 
-func newExemplarChecker(buff *labeledValuesCollection, exemplarKeyFields ...string) ExemplarChecker {
+func newExemplarChecker(buff *labeledValuesCollection) ExemplarChecker {
 	ch := ExemplarChecker{
-		data:   buff,
-		keys:   make(map[string]map[string]string),
-		values: make(map[string]map[string]int64),
+		data: buff,
+		keys: make(map[labeledValuesMapKey]map[string]bool),
 	}
 	return ch
 }
 
-func (finder *ExemplarChecker) isExemplar(lv labeledValues, paramName string) bool {
-	// targetSess := finder.keys[base][param]
-	return false
+func (finder *ExemplarChecker) isExemplar(lv *labeledValues, paramName string) bool {
+	key, err := finder.data.createKey(lv)
+	if err != nil {
+		return false
+	}
+	is := finder.keys[key][paramName]
+	return is
+}
+
+// В качестве экземпляров определяет случайные.
+//
+// Parameters:
+//
+//	percent - Сколько процентов данных нужно поместить в экземпляры.
+func (finder *ExemplarChecker) findRandomExemplars(percent int) {
+	gen := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for key, lv := range finder.data.data() {
+		for p, _ := range lv.metersData {
+			if gen.Intn(100) > percent {
+				continue
+			}
+			parMap := finder.keys[key]
+			if parMap == nil {
+				parMap = make(map[string]bool)
+			}
+			finder.keys[key] = parMap
+			parMap[p] = true
+		}
+	}
 }
 
 func (finder *ExemplarChecker) clear() {
 	clear(finder.keys)
-	clear(finder.values)
 }
 
 func atoi(n string) *int64 {
