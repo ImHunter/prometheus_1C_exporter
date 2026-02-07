@@ -57,9 +57,18 @@ func (exp *ExporterSessions) Construct(s *settings.Settings) *ExporterSessions {
 	exp.settings = s
 	exp.ExporterInfobaseInfo.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
+	exp.buff = newLabeledValuesCollection("infobase", "appid")
+
+	exp.initAllMeterParams()
 
 	go exp.fillBaseList()
 	return exp
+}
+
+func (exp *ExporterSessions) initAllMeterParams() {
+
+	params := &(exp.meterParams)
+	params.add("count", "count", ApplyMethodInc).funcValueReader = createSessReader()
 }
 
 func (exp *ExporterSessions) getValue() {
@@ -71,36 +80,40 @@ func (exp *ExporterSessions) getValue() {
 		return
 	}
 
+	for _, item := range ses {
+
+		lv := newLabeledValues()
+		lv.labelsData["infobase"] = item["infobase"]
+		lv.labelsData["appid"] = item["app-id"]
+		lv.readMeterValues(&item, exp.meterParams)
+		lv.applyToCollection(exp.buff, exp.meterParams)
+
+		lv = newLabeledValues()
+		lv.labelsData["infobase"] = item["infobase"]
+		lv.labelsData["appid"] = "*"
+		lv.readMeterValues(&item, exp.meterParams)
+		lv.applyToCollection(exp.buff, exp.meterParams)
+
+	}
+
+	for _, lv := range exp.buff.data() {
+		lv.labelsData["base"] = exp.findBaseName(lv.labelsData["infobase"])
+	}
+
 	if exp.usedSummary(exp.settings) {
-		groupByDB := map[string]int{}
-		for _, item := range ses {
-			groupByDB[exp.findBaseName(item["infobase"])]++
-		}
-
 		exp.summary.Reset()
-
-		// с разбивкой по БД
-		for infobaseName, v := range groupByDB {
-			exp.summary.WithLabelValues(infobaseName).Observe(float64(v))
+		for _, lv := range exp.buff.data() {
+			if lv.labelsData["appid"] == "*" {
+				exp.summary.With(lv.GetWith("base")).Observe(float64(*lv.metersData["count"]))
+			}
 		}
 	}
 
 	if exp.usedGauge(exp.settings) {
-
-		groupByAppID := make(map[string]labelValuesMap)
-		for _, item := range ses {
-			infobaseName := exp.findBaseName(item["infobase"])
-			appIdValues := groupByAppID[infobaseName]
-			if appIdValues == nil {
-				groupByAppID[infobaseName] = make(labelValuesMap)
-			}
-			groupByAppID[infobaseName][item["app-id"]]++
-		}
-
 		exp.gauge.Reset()
-		for infobaseName, labelValues := range groupByAppID {
-			for appid, v := range labelValues {
-				exp.gauge.WithLabelValues(infobaseName, appid).Set(float64(v))
+		for _, lv := range exp.buff.data() {
+			if lv.labelsData["appid"] != "*" {
+				exp.gauge.With(lv.GetWith("base", "appid")).Set(float64(*lv.metersData["count"]))
 			}
 		}
 	}
@@ -169,11 +182,19 @@ func (exp *ExporterSessions) usedGauge(s *settings.Settings) bool {
 }
 
 func (exp *ExporterSessions) usedHistogram(s *settings.Settings) bool {
-	return slices.Contains(exp.getMetricKinds(s), settings.KindGauge)
+	return slices.Contains(exp.getMetricKinds(s), settings.KindNativeHistogram)
 }
 
 // Возвращает настройки видов метрик экспортера. Для других видов экспортеров требуется переопределить,
 // чтобы методы usedSummary, usedGauge, usedHistogram корректно работали.
 func (exp *ExporterSessions) getMetricKinds(s *settings.Settings) []settings.TypeMetricKind {
 	return s.MetricKinds.Session
+}
+
+func createSessReader() valueReader {
+	return func(item *map[string]string, mp *MeterParams) *int64 {
+		val := new(int64)
+		*val = 1
+		return val
+	}
 }

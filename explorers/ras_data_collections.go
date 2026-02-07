@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -50,12 +51,16 @@ func (lv *labeledValues) readMeterValues(rasRowItem *map[string]string, meterPar
 	}
 }
 
-func (lv *labeledValues) writeToBuf(buff labeledValuesCollection, meterParams MeterParamsCollection) {
+func (lv *labeledValues) applyToCollection(buff labeledValuesCollection, meterParams MeterParamsCollection) {
 
 	var readedVal *int64
 	var existingVal *int64
 
-	buffKey := buff.createKey(lv)
+	buffKey, err := buff.createKey(lv)
+	if err != nil {
+		// Пока не решил окончательно, нужна ли паника. Или может просто возврат.
+		panic(fmt.Sprintf("%v", err))
+	}
 
 	bufferData := buff.data()[buffKey]
 	if bufferData == nil {
@@ -65,16 +70,12 @@ func (lv *labeledValues) writeToBuf(buff labeledValuesCollection, meterParams Me
 		for _, mp := range meterParams {
 			existingVal = bufferData.metersData[mp.Name]
 			readedVal = lv.metersData[mp.Name]
-			if readedVal != nil {
-				if existingVal != nil {
-					bufferData.metersData[mp.Name] = mp.applyValue(readedVal, existingVal)
-				} else {
-					bufferData.metersData[mp.Name] = readedVal
-				}
+			v, a := mp.applyValue(readedVal, existingVal)
+			if a {
+				bufferData.metersData[mp.Name] = v
 			}
 		}
 		lv.clear()
-		lv = nil
 	}
 }
 
@@ -143,12 +144,19 @@ func (buff *labeledValuesCollection) clear() {
 	}
 }
 
-func (buff *labeledValuesCollection) createKey(lv *labeledValues) labeledValuesMapKey {
+func (buff *labeledValuesCollection) createKey(lv *labeledValues) (labeledValuesMapKey, error) {
 	var retVal labeledValuesMapKey
+	var keyVal string
+	var keyExists bool
 	for k, v := range buff.keyFields {
-		retVal[k] = lv.labelsData[v]
+		keyVal, keyExists = lv.labelsData[v]
+		if keyExists {
+			retVal[k] = keyVal
+		} else {
+			return labeledValuesMapKey{}, fmt.Errorf("значение ключа %q не найдено в значениях меток", v)
+		}
 	}
-	return retVal
+	return retVal, nil
 }
 
 type ExemplarChecker struct {

@@ -26,7 +26,6 @@ func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings) *ExporterChe
 
 	exp.settings = s
 	exp.buff = newLabeledValuesCollection("guid")
-	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 
 	// Получаем список баз в кластере

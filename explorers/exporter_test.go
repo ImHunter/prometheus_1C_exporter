@@ -206,7 +206,7 @@ func Test_Exporter(t *testing.T) {
 		exp.summary = summaryMock
 		exp.clusterID = "123"
 
-		sessData := new(labeledValues)
+		sessData := newLabeledValues()
 		sessData.labelsData = map[string]string{
 			"basename":  "test",
 			"user":      "test",
@@ -229,14 +229,13 @@ func Test_Exporter(t *testing.T) {
 			"callsall":            atoi("3432"),
 		}
 
-		exp.buff = map[string]*labeledValues{
-			"1": sessData,
-		}
+		exp.buff = newLabeledValuesCollection("id")
+
 		exp.mx.Unlock()
 
 		t.Run("pass", func(t *testing.T) {
 			observer.EXPECT().Observe(gomock.Any()).Do(func(v float64) {
-				contains := lo.ContainsBy[*sessData](maps.Values(exp.buff), func(item *sessData) bool {
+				contains := lo.ContainsBy[*labeledValues](maps.Values(exp.buff.data()), func(item *labeledValues) bool {
 					return *item.metersData["memorytotal"] == int64(v) || *item.metersData["memorycurrent"] == int64(v) ||
 						*item.metersData["readcurrent"] == int64(v) || *item.metersData["readtotal"] == int64(v) ||
 						*item.metersData["writecurrent"] == int64(v) || *item.metersData["writetotal"] == int64(v) ||

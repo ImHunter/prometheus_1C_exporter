@@ -33,6 +33,8 @@ const (
 	ApplyMethodMax meterApplyMethod = "Max"
 	// Добавляет значение к текущему
 	ApplyMethodAppend meterApplyMethod = "Append"
+	// Независимо от значения счетчика, увеличивает значение на 1
+	ApplyMethodInc meterApplyMethod = "Inc"
 )
 
 // Описание счетчика
@@ -62,6 +64,11 @@ func (mp *MeterParams) setName(paramName string) *MeterParams {
 	return mp
 }
 
+func (mp *MeterParams) setSourceField(sourceField string) *MeterParams {
+	mp.SourceField = sourceField
+	return mp
+}
+
 func (mp *MeterParams) setOtherSourceFields(otherSourceFields []string) *MeterParams {
 	mp.OtherSourceFields = otherSourceFields
 	return mp
@@ -83,7 +90,7 @@ func (mp *MeterParams) readValue(item *map[string]string) *int64 {
 	return mp.funcValueReader(item, mp)
 }
 
-func (mp *MeterParams) applyValue(readedVal *int64, existingVal *int64) *int64 {
+func (mp *MeterParams) applyValue(readedVal *int64, existingVal *int64) (*int64, bool) {
 	return mp.funcValueApplier(readedVal, existingVal)
 }
 
@@ -158,6 +165,7 @@ func InitMeterFunctions() {
 		appliersRegistry[ApplyMethodSet] = createSetApplier()
 		appliersRegistry[ApplyMethodMax] = createMaxApplier()
 		appliersRegistry[ApplyMethodAppend] = createAppendApplier()
+		appliersRegistry[ApplyMethodInc] = createIncApplier()
 		defaultApplier = appliersRegistry[ApplyMethodSet]
 
 		// Локальная временная зона, для прочитывания времени
@@ -233,7 +241,7 @@ func createOnOffReader() valueReader {
 }
 
 // Прототип метода применения значения параметра
-type valueApplier func(readedVal *int64, existingVal *int64) *int64
+type valueApplier func(readedVal *int64, existingVal *int64) (*int64, bool)
 
 func getApplier(applyMethod meterApplyMethod) valueApplier {
 	if applyMethod == ApplyMethodUndefined {
@@ -246,25 +254,60 @@ func getApplier(applyMethod meterApplyMethod) valueApplier {
 }
 
 func createSetApplier() valueApplier {
-	return func(readedVal *int64, existingVal *int64) *int64 {
-		return readedVal
+	return func(readedVal *int64, existingVal *int64) (*int64, bool) {
+		v, i := incompleteValue(readedVal, existingVal)
+		if i {
+			return v, true
+		}
+		return readedVal, true
 	}
 }
 
 func createMaxApplier() valueApplier {
-	return func(readedVal *int64, existingVal *int64) *int64 {
+	return func(readedVal *int64, existingVal *int64) (*int64, bool) {
+		v, i := incompleteValue(readedVal, existingVal)
+		if i {
+			return v, true
+		}
 		if *readedVal > *existingVal {
-			return readedVal
+			return readedVal, true
 		} else {
-			return existingVal
+			return existingVal, false
 		}
 	}
 }
 
 func createAppendApplier() valueApplier {
-	return func(readedVal *int64, existingVal *int64) *int64 {
+	return func(readedVal *int64, existingVal *int64) (*int64, bool) {
+		v, i := incompleteValue(readedVal, existingVal)
+		if i {
+			return v, true
+		}
 		retVal := new(int64)
 		*retVal = *readedVal + *existingVal
-		return retVal
+		return retVal, true
+	}
+}
+
+func createIncApplier() valueApplier {
+	return func(readedVal *int64, existingVal *int64) (*int64, bool) {
+		retVal := new(int64)
+		if existingVal != nil {
+			*retVal = *existingVal
+		}
+		*retVal++
+		return retVal, true
+	}
+}
+
+func incompleteValue(readedVal *int64, existingVal *int64) (*int64, bool) {
+	if readedVal != nil && existingVal != nil {
+		return readedVal, false
+	} else if existingVal != nil {
+		return existingVal, true
+	} else if readedVal != nil {
+		return readedVal, true
+	} else {
+		return nil, true
 	}
 }

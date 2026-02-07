@@ -21,7 +21,6 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 	exp.BaseExporter = newBase(exp.GetName())
 	exp.logger.Info("Создание объекта")
 
-	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 
 	labelName := s.GetMetricNamePrefix() + exp.GetName()
@@ -189,7 +188,7 @@ func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
-	lv.writeToBuf(exp.buff, exp.meterParams)
+	lv.applyToCollection(exp.buff, exp.meterParams)
 
 }
 

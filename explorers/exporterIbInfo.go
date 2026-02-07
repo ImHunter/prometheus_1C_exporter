@@ -44,7 +44,6 @@ func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings) *ExporterInfoba
 
 	exp.settings = s
 	exp.buff = newLabeledValuesCollection("guid")
-	exp.meterParams = make(MeterParamsCollection, 0, 10)
 	exp.initAllMeterParams()
 
 	// Получаем список баз в кластере
@@ -64,7 +63,7 @@ func (exp *ExporterInfobaseInfo) getValue() {
 
 	exp.gauge.Reset()
 	if err := exp.getData(); err == nil {
-		for _, lv := range exp.buff.dataMap {
+		for _, lv := range exp.buff.data() {
 			for _, mp := range exp.meterParams {
 				with := lv.GetWith("base")
 				with["datatype"] = mp.Name
@@ -102,7 +101,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
 					lv.readMeterValues(&baseinfo, exp.meterParams)
-					lv.writeToBuf(exp.buff, exp.meterParams)
+					lv.applyToCollection(exp.buff, exp.meterParams)
 					db.lv = *lv
 					chanOut <- db
 				} else {
