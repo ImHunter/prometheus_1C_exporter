@@ -19,8 +19,9 @@ import (
 type ExporterSessions struct {
 	ExporterInfobaseInfo
 
-	mx    sync.RWMutex
-	cache *expirable.LRU[string, []map[string]string]
+	mx                 sync.RWMutex
+	cache              *expirable.LRU[string, []map[string]string]
+	getMetricKindsFunc func(s *settings.Settings) []settings.TypeMetricKind
 }
 
 type labelValuesMap map[string]int
@@ -28,6 +29,9 @@ type labelValuesMap map[string]int
 func (exp *ExporterSessions) Construct(s *settings.Settings) *ExporterSessions {
 	exp.BaseExporter = newBase(exp.GetName())
 	exp.logger.Info("Создание объекта")
+	exp.getMetricKindsFunc = func(s *settings.Settings) []settings.TypeMetricKind {
+		return s.MetricKinds.Session
+	}
 
 	labelName := s.GetMetricNamePrefix() + exp.GetName()
 
@@ -174,15 +178,24 @@ func (exp *ExporterSessions) GetType() model.MetricType {
 }
 
 func (exp *ExporterSessions) usedSummary(s *settings.Settings) bool {
-	return slices.Contains(exp.getMetricKinds(s), settings.KindSummary)
+	if exp.getMetricKindsFunc == nil {
+		return false
+	}
+	return slices.Contains(exp.getMetricKindsFunc(s), settings.KindSummary)
 }
 
 func (exp *ExporterSessions) usedGauge(s *settings.Settings) bool {
-	return slices.Contains(exp.getMetricKinds(s), settings.KindGauge)
+	if exp.getMetricKindsFunc == nil {
+		return false
+	}
+	return slices.Contains(exp.getMetricKindsFunc(s), settings.KindGauge)
 }
 
 func (exp *ExporterSessions) usedHistogram(s *settings.Settings) bool {
-	return slices.Contains(exp.getMetricKinds(s), settings.KindNativeHistogram)
+	if exp.getMetricKindsFunc == nil {
+		return false
+	}
+	return slices.Contains(exp.getMetricKindsFunc(s), settings.KindNativeHistogram)
 }
 
 // Возвращает настройки видов метрик экспортера. Для других видов экспортеров требуется переопределить,

@@ -20,6 +20,9 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 
 	exp.BaseExporter = newBase(exp.GetName())
 	exp.logger.Info("Создание объекта")
+	exp.getMetricKindsFunc = func(s *settings.Settings) []settings.TypeMetricKind {
+		return s.MetricKinds.SessionsData
+	}
 
 	exp.initAllMeterParams()
 
@@ -31,6 +34,17 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 				Name:        labelName,
 				Help:        "Показатели сессий из кластера 1С",
 				Objectives:  map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+				ConstLabels: prometheus.Labels{"ras_host": s.GetRASHostPort(), "host": exp.host},
+			},
+			[]string{"base", "user", "id", "datatype", "appid"},
+		)
+	}
+
+	if exp.usedGauge(s) {
+		exp.gauge = prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name:        labelName + "_gauge",
+				Help:        "Показатели сессий из кластера 1С",
 				ConstLabels: prometheus.Labels{"ras_host": s.GetRASHostPort(), "host": exp.host},
 			},
 			[]string{"base", "user", "id", "datatype", "appid"},
@@ -98,6 +112,10 @@ func (exp *ExporterSessionsData) getValue() {
 		exp.summary.Reset()
 	}
 
+	if exp.usedGauge(exp.settings) {
+		exp.gauge.Reset()
+	}
+
 	if exp.usedHistogram(exp.settings) {
 		if exp.usedExemplars() {
 			exemplarChecker = newExemplarChecker(&exp.buff, "base")
@@ -119,6 +137,18 @@ func (exp *ExporterSessionsData) getValue() {
 				}
 				with["datatype"] = n
 				exp.summary.With(with).Observe(float64(*m))
+			}
+		}
+
+		if exp.usedGauge(exp.settings) {
+			with = lv.GetWithAll()
+			with["id"] = k[0]
+			for n, m := range lv.metersData {
+				if m == nil {
+					continue
+				}
+				with["datatype"] = n
+				exp.gauge.With(with).Set(float64(*m))
 			}
 		}
 
@@ -158,6 +188,10 @@ func (exp *ExporterSessionsData) Collect(ch chan<- prometheus.Metric) {
 		exp.summary.Collect(ch)
 	}
 
+	if exp.usedGauge(exp.settings) {
+		exp.gauge.Collect(ch)
+	}
+
 	if exp.usedHistogram(exp.settings) {
 		for _, h := range exp.histograms {
 			h.Collect(ch)
@@ -190,10 +224,6 @@ func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 
 	lv.applyToCollection(exp.buff, exp.meterParams)
 
-}
-
-func (exp *ExporterSessionsData) getMetricKinds(s *settings.Settings) []settings.TypeMetricKind {
-	return s.MetricKinds.SessionsData
 }
 
 func (exp *ExporterSessionsData) usedExemplars() bool {
