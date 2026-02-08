@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -133,6 +135,12 @@ func (a *app) initHTTP() {
 	siteMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	siteMux.HandleFunc("POST /set_config", a.setConfig)
+	siteMux.HandleFunc("POST /shutdown_emulate", a.emulateCrash)
+
+	a.httpSrv = &http.Server{
+		Handler: siteMux,
+		Addr:    ":" + a.port,
+	}
 
 	a.httpSrv = &http.Server{
 		Handler: siteMux,
@@ -197,4 +205,33 @@ func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 
 	a.renewSettings()
 
+}
+
+func (a *app) emulateCrash(w http.ResponseWriter, r *http.Request) {
+
+	exitCodeStr := r.URL.Query().Get("exit_code")
+	exitCode := 1 // значение по умолчанию
+
+	if exitCodeStr != "" {
+		if code, err := strconv.Atoi(exitCodeStr); err == nil {
+			exitCode = code
+		} else {
+			http.Error(w, "Incorrect exit_code parameter", http.StatusBadRequest)
+			return
+		}
+	}
+
+	logger.DefaultLogger.Infof("Crash with exit code %d", exitCode)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":    "crash_emulated",
+		"exit_code": exitCode,
+		"message":   "Application will exit with the specified code",
+	})
+
+	time.Sleep(100 * time.Millisecond)
+
+	os.Exit(exitCode)
 }
