@@ -122,6 +122,7 @@ func (a *app) renewSettings() {
 
 func (a *app) initHTTP() {
 	siteMux := http.NewServeMux()
+
 	siteMux.Handle("/metrics", promhttp.Handler())
 	siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
 	siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
@@ -135,7 +136,9 @@ func (a *app) initHTTP() {
 	siteMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	siteMux.HandleFunc("POST /set_config", a.setConfig)
-	siteMux.HandleFunc("POST /shutdown_emulate", a.emulateCrash)
+	siteMux.HandleFunc("POST /shutdown_emulate", a.crash)
+
+	siteMux.HandleFunc("/", a.homePage)
 
 	a.httpSrv = &http.Server{
 		Handler: siteMux,
@@ -207,7 +210,7 @@ func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (a *app) emulateCrash(w http.ResponseWriter, r *http.Request) {
+func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 
 	exitCodeStr := r.URL.Query().Get("exit_code")
 	exitCode := 1 // значение по умолчанию
@@ -234,4 +237,39 @@ func (a *app) emulateCrash(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(100 * time.Millisecond)
 
 	os.Exit(exitCode)
+}
+
+func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
+	// Если запрос не к корню, возвращаем 404
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	info := map[string]interface{}{
+		"service":     "Prometheus Exporter для кластера 1С",
+		"description": "Экспортер метрик Prometheus",
+		"version":     "1.5.1.20", // Можно брать из переменной приложения
+		"status":      "running",
+		"endpoints": []map[string]string{
+			{"path": "/", "method": "GET", "description": "Информационная страница"},
+			{"path": "/metrics", "method": "GET", "description": "Основные метрики Prometheus"},
+			{"path": "/metrics_os", "method": "GET", "description": "Метрики операционной системы"},
+			{"path": "/metrics_rac", "method": "GET", "description": "Метрики RAC"},
+			{"path": "/Continue", "method": "GET", "description": "Возобновить сбор метрик"},
+			{"path": "/Pause", "method": "GET", "description": "Приостановить сбор метрик"},
+			{"path": "/debug/pprof/", "method": "GET", "description": "Профилирование Go"},
+			{"path": "/set_config", "method": "POST", "description": "Установка конфигурации"},
+			{"path": "/shutdown_emulate", "method": "POST", "description": "Аварийное завершение"},
+		},
+		// "documentation": "https://prometheus.io/docs/instrumenting/exporters/",
+	}
+
+	// Устанавливаем заголовки
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	// Форматируем JSON с отступами для читаемости
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	encoder.Encode(info)
 }
