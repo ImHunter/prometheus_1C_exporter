@@ -16,9 +16,9 @@ type ExporterSessionsData struct {
 	histograms map[string]*prometheus.HistogramVec
 }
 
-func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessionsData {
+func (exp *ExporterSessionsData) Construct(s *settings.Settings, metricName string) model.IExporter {
 
-	exp.BaseExporter = newBase(exp.GetName())
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 	exp.getMetricKindsFunc = func(s *settings.Settings) []settings.TypeMetricKind {
 		return s.MetricKinds.SessionsData
@@ -26,7 +26,7 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 
 	exp.initAllMeterParams()
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 
 	if exp.usedSummary(s) {
 		exp.summary = prometheus.NewSummaryVec(
@@ -85,7 +85,15 @@ func (exp *ExporterSessionsData) Construct(s *settings.Settings) *ExporterSessio
 
 func (exp *ExporterSessionsData) collectMetrics(delay time.Duration) {
 	for {
-		ses, _ := exp.getSessions()
+		if !exp.isAllowedReading() {
+			time.Sleep(exp.nextScrapeTime.Sub(time.Now()))
+		}
+		ses, err := exp.getSessions()
+		exp.setAllowedReading(err == nil)
+		if !exp.isAllowedReading() {
+			continue
+		}
+
 		for _, item := range ses {
 			exp.loadRasRow(&item)
 		}
@@ -167,13 +175,9 @@ func (exp *ExporterSessionsData) getValue() {
 					hist.With(withLabel).Observe(float64(*m))
 				}
 			}
+			exemplarChecker.clear()
 		}
-
 		exp.buff.deleteByKey(k)
-
-		// clear(exemplarChecker.keys)
-		// clear(exemplarChecker.values)
-
 	}
 	exp.buff.clear()
 }
@@ -202,9 +206,9 @@ func (exp *ExporterSessionsData) Collect(ch chan<- prometheus.Metric) {
 
 }
 
-func (exp *ExporterSessionsData) GetName() string {
-	return "sessions_data"
-}
+// func (exp *ExporterSessionsData) GetName() string {
+// 	return "sessions_data"
+// }
 
 func (exp *ExporterSessionsData) GetType() model.MetricType {
 	return model.TypeRAC

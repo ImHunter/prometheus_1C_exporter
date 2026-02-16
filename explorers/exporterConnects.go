@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,11 +15,11 @@ type ExporterConnects struct {
 	ExporterCheckSheduleJob
 }
 
-func (exp *ExporterConnects) Construct(s *settings.Settings) *ExporterConnects {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterConnects) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:        labelName,
@@ -94,6 +95,6 @@ func (exp *ExporterConnects) Collect(ch chan<- prometheus.Metric) {
 	exp.summary.Collect(ch)
 }
 
-func (exp *ExporterConnects) GetName() string {
-	return "connect"
-}
+// func (exp *ExporterConnects) GetName() string {
+// 	return "connect"
+// }

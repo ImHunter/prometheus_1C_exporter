@@ -161,7 +161,7 @@ func (s *Settings) RAC_Pass() string {
 	return ""
 }
 
-func (s *Settings) GetMetricNamePrefix() string {
+func (s *Settings) GetNamePrefix() string {
 	if s.Other != nil {
 		return s.Other.MetricNamePrefix
 	}

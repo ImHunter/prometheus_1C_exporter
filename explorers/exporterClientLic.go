@@ -14,11 +14,11 @@ type ExporterClientLic struct {
 	BaseRACExporter
 }
 
-func (exp *ExporterClientLic) Construct(s *settings.Settings) *ExporterClientLic {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterClientLic) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:        labelName,
@@ -97,9 +97,9 @@ func (exp *ExporterClientLic) Collect(ch chan<- prometheus.Metric) {
 	exp.summary.Collect(ch)
 }
 
-func (exp *ExporterClientLic) GetName() string {
-	return "client_lic"
-}
+// func (exp *ExporterClientLic) GetName() string {
+// 	return "client_lic"
+// }
 
 func (exp *ExporterClientLic) GetType() model.MetricType {
 	return model.TypeRAC

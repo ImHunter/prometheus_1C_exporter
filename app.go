@@ -37,26 +37,28 @@ type app struct {
 }
 
 func (a *app) Init(_ svc.Environment) (err error) {
-	a.metric = new(expl.Metrics).FillMetrics(a.settings)
+	expl.InitMeterFunctions()
+	a.metric, err = new(expl.Metrics).FillMetrics(a.settings)
+	if err != nil {
+		return err
+	}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	a.osRegistry = prometheus.NewRegistry()
 	a.racRegistry = prometheus.NewRegistry()
 
-	expl.InitMeterFunctions()
+	// lic := new(expl.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
+	// perf := new(expl.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
+	// sJob := new(expl.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
+	// iin := new(expl.ExporterInfobaseInfo).Construct(a.settings)          // Информация о запретах в информационной базе
+	// ses := new(expl.ExporterSessions).Construct(a.settings)              // Сеансы
+	// conn := new(expl.ExporterConnects).Construct(a.settings)             // Соединения
+	// currentMem := new(expl.ExporterSessionsData).Construct(a.settings)   // Текущая память сеанса
+	// cpu := new(expl.CPU).Construct(a.settings)                           // CPU
+	// proc := new(expl.Processes).Construct(a.settings)                    // Данные CPU/память в разрезе процессов
+	// disk := new(expl.ExporterDisk).Construct(a.settings)                 // Диск
 
-	lic := new(expl.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
-	perf := new(expl.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
-	sJob := new(expl.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
-	iin := new(expl.ExporterInfobaseInfo).Construct(a.settings)          // Информация о запретах в информационной базе
-	ses := new(expl.ExporterSessions).Construct(a.settings)              // Сеансы
-	conn := new(expl.ExporterConnects).Construct(a.settings)             // Соединения
-	currentMem := new(expl.ExporterSessionsData).Construct(a.settings)   // Текущая память сеанса
-	cpu := new(expl.CPU).Construct(a.settings)                           // CPU
-	proc := new(expl.Processes).Construct(a.settings)                    // Данные CPU/память в разрезе процессов
-	disk := new(expl.ExporterDisk).Construct(a.settings)                 // Диск
-
-	a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn, iin)
+	// a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn, iin)
 	a.initHTTP()
 
 	return nil
@@ -240,7 +242,7 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
-	// Если запрос не к корню, возвращаем 404
+
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -249,7 +251,7 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 	info := map[string]interface{}{
 		"service":     "Prometheus Exporter для кластера 1С",
 		"description": "Экспортер метрик Prometheus",
-		"version":     "1.5.1.20", // Можно брать из переменной приложения
+		"version":     "1.5.1.21",
 		"status":      "running",
 		"endpoints": []map[string]string{
 			{"path": "/", "method": "GET", "description": "Информационная страница"},
@@ -265,10 +267,8 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 		// "documentation": "https://prometheus.io/docs/instrumenting/exporters/",
 	}
 
-	// Устанавливаем заголовки
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
-	// Форматируем JSON с отступами для читаемости
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	encoder.Encode(info)

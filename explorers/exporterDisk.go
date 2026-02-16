@@ -19,11 +19,11 @@ type ExporterDisk struct {
 	hInfo IDiskInfo
 }
 
-func (exp *ExporterDisk) Construct(s *settings.Settings) *ExporterDisk {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterDisk) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:       labelName,
@@ -68,9 +68,9 @@ func (exp *ExporterDisk) Collect(ch chan<- prometheus.Metric) {
 	exp.summary.Collect(ch)
 }
 
-func (exp *ExporterDisk) GetName() string {
-	return "disk"
-}
+// func (exp *ExporterDisk) GetName() string {
+// 	return "disk"
+// }
 
 func (exp *ExporterDisk) GetType() model.MetricType {
 	return model.TypeOS

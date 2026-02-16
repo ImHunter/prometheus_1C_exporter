@@ -21,12 +21,12 @@ type Processes struct {
 	hInfo IProcessesInfo
 }
 
-func (cpu *Processes) Construct(s *settings.Settings) *Processes {
-	cpu.BaseExporter = newBase(cpu.GetName())
-	cpu.logger.Info("Создание объекта")
+func (exp *Processes) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
+	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + cpu.GetName()
-	cpu.summary = prometheus.NewSummaryVec(
+	labelName := s.GetNamePrefix() + exp.GetName()
+	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:       labelName,
 			Help:       "Метрики CPU/памяти в разрезе процессов",
@@ -35,21 +35,22 @@ func (cpu *Processes) Construct(s *settings.Settings) *Processes {
 		[]string{"host", "pid", "procName", "metrics"},
 	)
 
-	cpu.hInfo = new(hardwareInfo)
-	cpu.settings = s
-	return cpu
+	exp.hInfo = new(hardwareInfo)
+	exp.settings = s
+
+	return exp
 }
 
-func (cpu *Processes) getValue() {
-	cpu.logger.Info("получение данных экспортера")
+func (exp *Processes) getValue() {
+	exp.logger.Info("получение данных экспортера")
 
-	processes, err := cpu.hInfo.Processes()
+	processes, err := exp.hInfo.Processes()
 	if err != nil {
-		cpu.logger.Error(errors.Wrap(err, "get processes error"))
+		exp.logger.Error(errors.Wrap(err, "get processes error"))
 		return
 	}
 
-	cpu.summary.Reset()
+	exp.summary.Reset()
 	for _, p := range processes {
 		var memInfo process.MemoryInfoStat
 
@@ -60,28 +61,28 @@ func (cpu *Processes) getValue() {
 		}
 
 		if procName, err := p.Name(); err == nil {
-			cpu.summary.WithLabelValues(cpu.host, strconv.Itoa(int(p.Pid)), procName, "cpu").Observe(cpuPercent)
-			cpu.summary.WithLabelValues(cpu.host, strconv.Itoa(int(p.Pid)), procName, "memoryPercent").Observe(float64(memPercent))
-			cpu.summary.WithLabelValues(cpu.host, strconv.Itoa(int(p.Pid)), procName, "memoryRSS").Observe(float64(memInfo.RSS))
-			cpu.summary.WithLabelValues(cpu.host, strconv.Itoa(int(p.Pid)), procName, "memoryVMS").Observe(float64(memInfo.VMS))
+			exp.summary.WithLabelValues(exp.host, strconv.Itoa(int(p.Pid)), procName, "cpu").Observe(cpuPercent)
+			exp.summary.WithLabelValues(exp.host, strconv.Itoa(int(p.Pid)), procName, "memoryPercent").Observe(float64(memPercent))
+			exp.summary.WithLabelValues(exp.host, strconv.Itoa(int(p.Pid)), procName, "memoryRSS").Observe(float64(memInfo.RSS))
+			exp.summary.WithLabelValues(exp.host, strconv.Itoa(int(p.Pid)), procName, "memoryVMS").Observe(float64(memInfo.VMS))
 		}
 	}
 }
 
-func (cpu *Processes) Collect(ch chan<- prometheus.Metric) {
-	if cpu.isLocked.Load() {
+func (exp *Processes) Collect(ch chan<- prometheus.Metric) {
+	if exp.isLocked.Load() {
 		return
 	}
 
-	cpu.getValue()
-	cpu.summary.Collect(ch)
+	exp.getValue()
+	exp.summary.Collect(ch)
 }
 
-func (cpu *Processes) GetName() string {
-	return "processes"
-}
+// func (cpu *Processes) GetName() string {
+// 	return "processes"
+// }
 
-func (cpu *Processes) GetType() model.MetricType {
+func (exp *Processes) GetType() model.MetricType {
 	return model.TypeOS
 }
 

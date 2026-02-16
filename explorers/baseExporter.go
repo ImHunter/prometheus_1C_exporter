@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
 
 	"github.com/pkg/errors"
@@ -22,13 +23,27 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/charmap"
 
-	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 )
+
+type ExporterFactory func() model.IExporter
 
 var (
 	// Канал для передачи флага принудительного обновления данных из REST
 	CForce chan struct{}
+	// Типы экспортеров
+	ExporterFactories = map[string]ExporterFactory{
+		"available_performance": func() model.IExporter { return new(ExporterAvailablePerformance) },
+		"shedule_job":           func() model.IExporter { return new(ExporterCheckSheduleJob) },
+		"client_lic":            func() model.IExporter { return new(ExporterClientLic) },
+		"connect":               func() model.IExporter { return new(ExporterConnects) },
+		"cpu":                   func() model.IExporter { return new(CPU) },
+		"disk":                  func() model.IExporter { return new(ExporterDisk) },
+		"ibinfo":                func() model.IExporter { return new(ExporterInfobaseInfo) },
+		"processes":             func() model.IExporter { return new(Processes) },
+		"session":               func() model.IExporter { return new(ExporterSessions) },
+		"sessions_data":         func() model.IExporter { return new(ExporterSessionsData) },
+	}
 )
 
 func init() {
@@ -45,16 +60,17 @@ type cmdRunner struct {
 
 // базовый класс для всех метрик
 type BaseExporter struct {
-	mx       sync.RWMutex
-	summary  IPrometheusMetric //*prometheus.SummaryVec
-	gauge    *prometheus.GaugeVec
-	settings *settings.Settings
-	ctx      context.Context
-	cancel   context.CancelFunc
-	isLocked atomic.Bool
-	logger   *zap.SugaredLogger
-	host     string
-	runner   IRunner
+	mx         sync.RWMutex
+	summary    IPrometheusMetric //*prometheus.SummaryVec
+	gauge      *prometheus.GaugeVec
+	settings   *settings.Settings
+	ctx        context.Context
+	cancel     context.CancelFunc
+	isLocked   atomic.Bool
+	logger     *zap.SugaredLogger
+	host       string
+	runner     IRunner
+	metricName string
 }
 
 // базовый класс для всех метрик собираемых через RAC
@@ -74,11 +90,12 @@ func newBase(name string) BaseExporter {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return BaseExporter{
-		host:   host,
-		logger: logger.DefaultLogger.Named(name),
-		ctx:    ctx,
-		cancel: cancel,
-		runner: new(cmdRunner),
+		host:       host,
+		logger:     logger.DefaultLogger.Named(name),
+		ctx:        ctx,
+		cancel:     cancel,
+		runner:     new(cmdRunner),
+		metricName: name,
 	}
 }
 
@@ -105,17 +122,25 @@ func (r *cmdRunner) Run(cmd *exec.Cmd) (string, error) {
 		return "", errors.New("command execution was interrupted by timeout")
 	case err := <-errch:
 		if err != nil {
-			stderr := cmd.Stderr.(*bytes.Buffer).String()
+			stderr := cmd.Stderr.(*bytes.Buffer)
+			texterr := string(normalizeEncodingBytes(stderr.Bytes()))
 			errText := fmt.Sprintf("Произошла ошибка запуска:\n\terr:%v\n\t", err.Error())
-			if stderr != "" {
-				errText += fmt.Sprintf("StdErr:%v\n", stderr)
+			if texterr != "" {
+				errText += fmt.Sprintf("StdErr:%v\n", texterr)
 			}
 
 			return "", errors.New(errText)
 		} else {
-			return cmd.Stdout.(*bytes.Buffer).String(), nil
+			// return cmd.Stdout.(*bytes.Buffer).String(), nil
+			stdout := cmd.Stdout.(*bytes.Buffer)
+			return string(normalizeEncodingBytes(stdout.Bytes())), nil
 		}
 	}
+}
+
+func (exp *BaseExporter) Construct(sett *settings.Settings, metricName string) model.IExporter {
+	// Пока ничего не делаем. Для полноты интерфейса. По идее, сюда нужно перетащить содержимое newBase. А в newBase сделать вызов Construct.
+	return exp
 }
 
 func (exp *BaseExporter) run(cmd *exec.Cmd) (string, error) {
@@ -211,17 +236,44 @@ func (exp *BaseRACExporter) appendLogPass(param []string) []string {
 	return param
 }
 
+func (exp *BaseExporter) GetName() string {
+	return exp.metricName
+}
+
+func (exp *BaseExporter) GetType() model.MetricType {
+	return model.Undefined
+}
+func (exp *BaseExporter) Collect(chan<- prometheus.Metric) {
+	// Ничего не делаем. Пока для полноты интерфейса.
+}
+
 func normalizeEncoding(str string) string {
-	encoding := cpd.CodepageAutoDetect([]byte(str))
+
+	// encoding := cpd.CodepageAutoDetect([]byte(str))
+
+	// switch encoding {
+	// case cpd.CP866:
+	// 	encoder := charmap.CodePage866.NewDecoder()
+	// 	if msg, err := encoder.String(str); err == nil {
+	// 		return msg
+	// 	}
+	// }
+	// return str
+	b := normalizeEncodingBytes([]byte(str))
+	return string(b)
+}
+
+func normalizeEncodingBytes(b []byte) []byte {
+	encoding := cpd.CodepageAutoDetect(b)
 
 	switch encoding {
 	case cpd.CP866:
 		encoder := charmap.CodePage866.NewDecoder()
-		if msg, err := encoder.String(str); err == nil {
-			return msg
+		if be, err := encoder.Bytes(b); err == nil {
+			return be
 		}
 	}
-	return str
+	return b
 }
 
 func (exp *BaseRACExporter) GetClusterID() string {
@@ -266,13 +318,22 @@ func (exp *Metrics) AppendExporter(ex ...model.IExporter) {
 	exp.Exporters = append(exp.Exporters, ex...)
 }
 
-func (exp *Metrics) FillMetrics(set *settings.Settings) *Metrics {
+func (exp *Metrics) FillMetrics(set *settings.Settings) (*Metrics, error) {
+	var err error
 	exp.Metrics = []string{}
-	for k := range set.GetExporters() {
-		exp.Metrics = append(exp.Metrics, k)
+	for expName := range set.GetExporters() {
+		factory, exists := ExporterFactories[expName]
+		if exists {
+			var newExporter model.IExporter = factory()
+			newExporter.Construct(set, expName)
+			exp.Exporters = append(exp.Exporters, newExporter)
+			exp.Metrics = append(exp.Metrics, expName)
+		} else {
+			err = errors.New(fmt.Sprintf("Не описан тип экспортера %s", expName))
+		}
 	}
 
-	return exp
+	return exp, err
 }
 
 func (exp *Metrics) Contains(name string) bool {
@@ -372,3 +433,25 @@ func appendParam(in []string, value string) []string {
 	}
 	return in
 }
+
+// func bytesBuffToString(bb *bytes.Buffer) string {
+// 	txt := normalizeEncoding(bb.String())
+// 	return txt
+// }
+
+// func bytesBuffToString(bb *bytes.Buffer) string {
+// 	// Определяем кодировку
+// 	enc, name, certain := charset.DetermineEncoding(bb.Bytes(), "text/plain")
+// 	// fmt.Printf("Определена кодировка: %s (уверенность: %v)\n", name, certain)
+
+// 	// Преобразуем в UTF-8
+// 	decoder := enc.NewDecoder()
+// 	reader := transform.NewReader(bytes.NewReader(bb.Bytes()), decoder)
+// 	var txt string
+// 	if decoded, err := io.ReadAll(reader); err == nil {
+// 		txt = string(decoded)
+// 	} else {
+// 		txt = bb.String()
+// 	}
+// 	return txt
+// }

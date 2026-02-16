@@ -18,9 +18,10 @@ import (
 type ExporterInfobaseInfo struct {
 	BaseRACExporter
 
-	mx          sync.RWMutex
-	meterParams MeterParamsCollection
-	buff        labeledValuesCollection
+	mx             sync.RWMutex
+	nextScrapeTime *time.Time
+	meterParams    MeterParamsCollection
+	buff           labeledValuesCollection
 }
 
 var (
@@ -28,11 +29,11 @@ var (
 	fillBaseListRun sync.Mutex
 )
 
-func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings) *ExporterInfobaseInfo {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.gauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name:        labelName,
@@ -86,6 +87,10 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 		lv         labeledValues
 	}
 
+	if !exp.isAllowedReading() {
+		return nil
+	}
+
 	chanIn := make(chan *dbinfo, 5)
 	chanOut := make(chan *dbinfo)
 	wg := new(sync.WaitGroup)
@@ -96,6 +101,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 
 			for db := range chanIn {
 				if baseinfo, err := exp.getInfoBase(db.guid, db.name); err == nil {
+					exp.setAllowedReading(true)
 					lv := newLabeledValues()
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
@@ -104,6 +110,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					db.lv = *lv
 					chanOut <- db
 				} else {
+					exp.setAllowedReading(false)
 					exp.logger.Error(err)
 				}
 			}
@@ -143,8 +150,12 @@ func (exp *ExporterInfobaseInfo) getInfoBase(baseGuid, basename string) (map[str
 
 	param = append(param, fmt.Sprintf("--cluster=%v", exp.GetClusterID()))
 	param = append(param, fmt.Sprintf("--infobase=%v", baseGuid))
-	param = append(param, fmt.Sprintf("--infobase-user=%v", login))
-	param = append(param, fmt.Sprintf("--infobase-pwd=%v", pass))
+	if login != "" {
+		param = append(param, fmt.Sprintf("--infobase-user=%v", login))
+	}
+	if pass != "" {
+		param = append(param, fmt.Sprintf("--infobase-pwd=%v", pass))
+	}
 
 	exp.logger.With("param", param).Debugf("Получаем информацию для базы %q", basename)
 	if result, err := exp.run(exec.CommandContext(exp.ctx, exp.settings.RAC_Path(), param...)); err != nil {
@@ -240,6 +251,33 @@ func (exp *ExporterInfobaseInfo) GetType() model.MetricType {
 	return model.TypeRAC
 }
 
-func (exp *ExporterInfobaseInfo) GetName() string {
-	return "ibinfo"
+// func (exp *ExporterInfobaseInfo) GetName() string {
+// 	return "ibinfo"
+// }
+
+func (exp *ExporterInfobaseInfo) setAllowedReading(isOk bool) {
+	if isOk {
+		if exp.nextScrapeTime != nil {
+			exp.logger.Info("Отключено ограничение чтения")
+		}
+		exp.nextScrapeTime = nil
+	} else {
+		if exp.nextScrapeTime == nil {
+			exp.nextScrapeTime = new(time.Time)
+			*exp.nextScrapeTime = time.Now().Add(time.Second * 30)
+			exp.logger.Info("Включено ограничение чтения")
+		} else {
+			befr := time.Now().Sub(*exp.nextScrapeTime)
+			aftr := time.Duration(float64(befr) * 1.2)
+			if aftr > time.Hour {
+				aftr = time.Hour
+			}
+			*exp.nextScrapeTime = time.Now().Add(aftr)
+		}
+	}
+}
+
+func (exp *ExporterInfobaseInfo) isAllowedReading() bool {
+	now := time.Now() // Для отладки
+	return exp.nextScrapeTime == nil || (exp.nextScrapeTime != nil && now.After(*exp.nextScrapeTime))
 }

@@ -26,14 +26,14 @@ type ExporterSessions struct {
 
 type labelValuesMap map[string]int
 
-func (exp *ExporterSessions) Construct(s *settings.Settings) *ExporterSessions {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterSessions) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 	exp.getMetricKindsFunc = func(s *settings.Settings) []settings.TypeMetricKind {
 		return s.MetricKinds.Session
 	}
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 
 	if exp.usedSummary(s) {
 		exp.summary = prometheus.NewSummaryVec(
@@ -66,6 +66,7 @@ func (exp *ExporterSessions) Construct(s *settings.Settings) *ExporterSessions {
 	exp.initAllMeterParams()
 
 	go exp.fillBaseList()
+
 	return exp
 }
 
@@ -76,9 +77,14 @@ func (exp *ExporterSessions) initAllMeterParams() {
 }
 
 func (exp *ExporterSessions) getValue() {
-	exp.logger.Info("получение данных экспортера")
 
+	if !exp.isAllowedReading() {
+		return
+	}
+
+	exp.logger.Info("получение данных экспортера")
 	ses, err := exp.getSessions()
+	exp.setAllowedReading(err == nil)
 	if err != nil {
 		exp.logger.Error(errors.Wrap(err, "getSessions error"))
 		return
@@ -169,9 +175,9 @@ func (exp *ExporterSessions) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (exp *ExporterSessions) GetName() string {
-	return "session"
-}
+// func (exp *ExporterSessions) GetName() string {
+// 	return "session"
+// }
 
 func (exp *ExporterSessions) GetType() model.MetricType {
 	return model.TypeRAC

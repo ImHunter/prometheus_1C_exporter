@@ -15,11 +15,11 @@ type ExporterAvailablePerformance struct {
 	BaseRACExporter
 }
 
-func (exp *ExporterAvailablePerformance) Construct(s *settings.Settings) *ExporterAvailablePerformance {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterAvailablePerformance) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:        labelName,
@@ -150,9 +150,9 @@ func (exp *ExporterAvailablePerformance) Collect(ch chan<- prometheus.Metric) {
 	exp.summary.Collect(ch)
 }
 
-func (exp *ExporterAvailablePerformance) GetName() string {
-	return "available_performance"
-}
+// func (exp *ExporterAvailablePerformance) GetName() string {
+// 	return "available_performance"
+// }
 
 func (exp *ExporterAvailablePerformance) GetType() model.MetricType {
 	return model.TypeRAC

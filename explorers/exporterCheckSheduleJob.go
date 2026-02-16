@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,11 +11,11 @@ type ExporterCheckSheduleJob struct {
 	ExporterInfobaseInfo
 }
 
-func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings) *ExporterCheckSheduleJob {
-	exp.BaseExporter = newBase(exp.GetName())
+func (exp *ExporterCheckSheduleJob) Construct(s *settings.Settings, metricName string) model.IExporter {
+	exp.BaseExporter = newBase(metricName)
 	exp.logger.Info("Создание объекта")
 
-	labelName := s.GetMetricNamePrefix() + exp.GetName()
+	labelName := s.GetNamePrefix() + exp.GetName()
 	exp.gauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name:        labelName,
@@ -57,6 +58,6 @@ func (exp *ExporterCheckSheduleJob) Collect(ch chan<- prometheus.Metric) {
 	exp.gauge.Collect(ch)
 }
 
-func (exp *ExporterCheckSheduleJob) GetName() string {
-	return "shedule_job"
-}
+// func (exp *ExporterCheckSheduleJob) GetName() string {
+// 	return "shedule_job"
+// }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -10,9 +11,10 @@ type IExporter interface {
 
 	Pause(expName string)
 	Continue(expName string)
-	GetName() string
 	Stop()
 	GetType() MetricType
+	Construct(s *settings.Settings, metricName string) IExporter
+	GetName() string
 }
 
 type MetricType byte
