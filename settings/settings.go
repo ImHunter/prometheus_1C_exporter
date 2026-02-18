@@ -66,6 +66,12 @@ type Settings struct {
 		// DisableGoCollector bool   `yaml:"DisableGoCollector" default:"false"`
 	} `yaml:"Other"`
 
+	WinSW *struct {
+		ConfigFile string `yaml:"ConfigFile"`
+		BinaryPath string `yaml:"BinaryPath"`
+		// DisableGoCollector bool   `yaml:"DisableGoCollector" default:"false"`
+	} `yaml:"WinSW"`
+
 	mx *sync.RWMutex `yaml:"-"`
 	// login, pass string        `yaml:"-"`
 	bases []Bases `yaml:"-"`

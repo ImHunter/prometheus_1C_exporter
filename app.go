@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -138,6 +139,7 @@ func (a *app) initHTTP() {
 	siteMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	siteMux.HandleFunc("POST /set_config", a.setConfig)
+	siteMux.HandleFunc("POST /set_binarypath", a.setBinaryPath)
 	siteMux.HandleFunc("POST /shutdown_emulate", a.crash)
 
 	siteMux.HandleFunc("/", a.homePage)
@@ -212,6 +214,40 @@ func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (a *app) setBinaryPath(w http.ResponseWriter, r *http.Request) {
+
+	logger.DefaultLogger.Info("Начинаем обработку метода /set_binarypath")
+
+	if r.Method != "POST" {
+		w.WriteHeader(405)
+		logger.DefaultLogger.Error("Требуется использование метода POST")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(400)
+		logger.DefaultLogger.Error("Ошибка чтения тела запроса: " + err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	binaryPath := string(bytes.TrimSpace(body))
+
+	if binaryPath == "" {
+		w.WriteHeader(400)
+		logger.DefaultLogger.Error("Пустое значение binaryPath")
+		return
+	}
+
+	// Пока сохраняем в настройки
+	a.settings.WinSW.BinaryPath = binaryPath
+
+	logger.DefaultLogger.Info("BinaryPath успешно установлен: " + binaryPath)
+	w.WriteHeader(201)
+
+}
+
 func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 
 	exitCodeStr := r.URL.Query().Get("exit_code")
@@ -251,7 +287,7 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 	info := map[string]interface{}{
 		"service":     "Prometheus Exporter для кластера 1С",
 		"description": "Экспортер метрик Prometheus",
-		"version":     "1.5.1.21",
+		"version":     "1.5.1.23",
 		"status":      "running",
 		"endpoints": []map[string]string{
 			{"path": "/", "method": "GET", "description": "Информационная страница"},
