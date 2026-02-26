@@ -1,0 +1,17 @@
+<service>
+	<id>PromExporter9095</id>
+	<name>Prometheus Exporter on port 9095</name>
+	<description>Экспортер Prometheus на порте 9095</description>
+	<executable>1c_exporter_service.exe</executable>
+	<arguments>-port=9095 --settings=settings.winsw.yml</arguments>
+	<logmode>rotate</logmode>
+	<onfailure action="restart">
+		<download from="https://host/new.exe" to="%BASE%\1c_exporter_service.exe">
+		</download>
+	</onfailure>
+	<extension className="WinSW.Plugins.RunawayProcessKillerExtension,WinSW.Plugins" enabled="true" id="killOnStartup">
+		<pidfile>%BASE%\PromExporter9095.pid</pidfile>
+		<stopTimeout>5000</stopTimeout>
+		<stopParentFirst>true</stopParentFirst>
+	</extension>
+</service>
