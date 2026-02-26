@@ -240,11 +240,15 @@ func (a *app) setBinaryPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Пока сохраняем в настройки
-	a.settings.WinSW.BinaryPath = binaryPath
+	err = a.settings.SetBinaryPath(binaryPath)
+	if err != nil {
+		w.WriteHeader(400)
+		logger.DefaultLogger.Error(err)
+		return
+	}
 
-	logger.DefaultLogger.Info("BinaryPath успешно установлен: " + binaryPath)
 	w.WriteHeader(201)
+	logger.DefaultLogger.Infof("BinaryPath успешно установлен: %s", binaryPath)
 
 }
 
@@ -257,8 +261,7 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 		if code, err := strconv.Atoi(exitCodeStr); err == nil {
 			exitCode = code
 		} else {
-			http.Error(w, "Incorrect exit_code parameter", http.StatusBadRequest)
-			return
+			exitCode = 1
 		}
 	}
 
@@ -273,8 +276,8 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 	})
 
 	time.Sleep(100 * time.Millisecond)
-
 	os.Exit(exitCode)
+
 }
 
 func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
@@ -299,8 +302,8 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 			{"path": "/debug/pprof/", "method": "GET", "description": "Профилирование Go"},
 			{"path": "/set_config", "method": "POST", "description": "Установка конфигурации"},
 			{"path": "/shutdown_emulate", "method": "POST", "description": "Аварийное завершение"},
+			{"path": "/set_binarypath", "method": "POST", "description": "Установка источника скачивания бинарного файла, при использовании WinSW"},
 		},
-		// "documentation": "https://prometheus.io/docs/instrumenting/exporters/",
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

@@ -203,3 +203,21 @@ TimeRotate: 1                 # Время в часах через которо
 TTLLogs: 8                    # Время жизни логов в часах
 `
 }
+
+func Test_SetBinaryPath(t *testing.T) {
+
+	s := &Settings{}
+	assert.NotNil(t, s.SetBinaryPath(""))
+
+	s.WinSW = &struct {
+		ConfigFile string "yaml:\"ConfigFile\""
+	}{}
+	assert.NotNil(t, s.SetBinaryPath(""))
+
+	s.WinSW.ConfigFile = "../examples_winsw.xmm"
+	assert.NotNil(t, s.SetBinaryPath("https://host/new.exe"))
+
+	s.WinSW.ConfigFile = "../examples_winsw.xml"
+	assert.Nil(t, s.SetBinaryPath("https://host/new.exe"))
+
+}

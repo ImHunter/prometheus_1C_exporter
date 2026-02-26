@@ -20,6 +20,7 @@ require (
 	golang.org/x/text v0.29.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
+	github.com/beevik/etree v1.6.0
 )
 
 require (
