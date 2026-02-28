@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
@@ -20,6 +21,7 @@ type ExporterInfobaseInfo struct {
 
 	mx             sync.RWMutex
 	nextScrapeTime *time.Time
+	currentBackoff time.Duration
 	meterParams    MeterParamsCollection
 	buff           labeledValuesCollection
 }
@@ -27,6 +29,12 @@ type ExporterInfobaseInfo struct {
 var (
 	baseList        []map[string]string
 	fillBaseListRun sync.Mutex
+)
+
+const (
+	initialBackoff = 30 * time.Second
+	backoffFactor  = 1.2
+	maxBackoff     = time.Hour
 )
 
 func (exp *ExporterInfobaseInfo) Construct(s *settings.Settings, metricName string) model.IExporter {
@@ -80,8 +88,6 @@ func (exp *ExporterInfobaseInfo) getValue() {
 func (exp *ExporterInfobaseInfo) getData() (err error) {
 	exp.logger.Debug("Получение данных")
 
-	// проверяем блокировку рег. заданий по каждой базе
-	// информация по базе получается довольно долго, особенно если в кластере много баз (например тестовый контур), поэтому делаем через пул воркеров
 	type dbinfo struct {
 		guid, name string
 		lv         labeledValues
@@ -91,17 +97,42 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 		return nil
 	}
 
-	chanIn := make(chan *dbinfo, 5)
-	chanOut := make(chan *dbinfo)
-	wg := new(sync.WaitGroup)
+	exp.mx.RLock()
+	currentBases := make([]map[string]string, len(baseList))
+	copy(currentBases, baseList)
+	exp.mx.RUnlock()
+
+	if len(currentBases) == 0 {
+		return nil
+	}
+
+	chanIn := make(chan *dbinfo, len(currentBases))
+	chanOut := make(chan *dbinfo, len(currentBases))
+
+	var hasError int32
+	var wg sync.WaitGroup
+
+	// Воркеры
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					atomic.StoreInt32(&hasError, 1)
+					exp.logger.Errorw("Паника в воркере", "recover", r)
+				}
+			}()
 
 			for db := range chanIn {
-				if baseinfo, err := exp.getInfoBase(db.guid, db.name); err == nil {
-					exp.setAllowedReading(true)
+				baseinfo, err := exp.getInfoBase(db.guid, db.name)
+				if err != nil {
+					atomic.StoreInt32(&hasError, 1)
+					// exp.logger.Errorw("Ошибка получения информации",
+					// 	"base", db.name,
+					// 	"guid", db.guid,
+					// 	"error", err)
+				} else {
 					lv := newLabeledValues()
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
@@ -109,29 +140,40 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					lv.applyToCollection(exp.buff, exp.meterParams)
 					db.lv = *lv
 					chanOut <- db
-				} else {
-					exp.setAllowedReading(false)
-					exp.logger.Error(err)
 				}
 			}
 		}()
 	}
 
+	// Отправка заданий
+	go func() {
+		for _, item := range currentBases {
+			exp.logger.Debugf("Запрашиваем информацию для базы %s", item["name"])
+			chanIn <- &dbinfo{
+				name: item["name"],
+				guid: item["infobase"],
+			}
+		}
+		close(chanIn)
+	}()
+
+	// Закрытие выходного канала
 	go func() {
 		wg.Wait()
 		close(chanOut)
 	}()
 
-	go func() {
-		exp.mx.RLock()
-		defer exp.mx.RUnlock()
+	// Чтение результатов
+	for range chanOut {
+		// просто читаем
+	}
 
-		for _, item := range baseList {
-			exp.logger.Debugf("Запрашиваем информацию для базы %s", item["name"])
-			chanIn <- &dbinfo{name: item["name"], guid: item["infobase"]}
-		}
-		close(chanIn)
-	}()
+	// Единое применение задержки
+	if atomic.LoadInt32(&hasError) == 1 {
+		exp.setAllowedReading(false)
+	} else {
+		exp.setAllowedReading(true)
+	}
 
 	return nil
 }
@@ -186,12 +228,21 @@ func (exp *ExporterInfobaseInfo) findBaseName(ref string) string {
 }
 
 func (exp *ExporterInfobaseInfo) fillBaseList() {
-	// fillBaseList вызывается из нескольких мест, но нам достаточно одной горутины, остальные пусть встают в очередь
-	// если завершится текущий экспортер, то стартанет следующий
+
+	defer func() {
+		if r := recover(); r != nil {
+			exp.logger.Errorw("Паника в fillBaseList", "recover", r)
+			// Перезапускаем горутину
+			time.Sleep(5 * time.Second) // небольшая задержка перед перезапуском
+			go exp.fillBaseList()
+		}
+	}()
+
+	// fillBaseList вызывается из нескольких мест, но нам достаточно одной горутины
 	fillBaseListRun.Lock()
 	defer fillBaseListRun.Unlock()
 
-	// редко, но все же список баз может быть изменен, поэтому делаем обновление периодическим, чтобы не приходилось перезапускать экспортер
+	// редко, но все же список баз может быть изменен, поэтому делаем обновление периодическим
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 
@@ -199,7 +250,7 @@ func (exp *ExporterInfobaseInfo) fillBaseList() {
 		exp.logger.Info("получаем список баз")
 		if err := exp.getListInfobase(); err != nil {
 			exp.logger.Error(errors.Wrap(err, "ошибка получения списка баз"))
-			t.Reset(time.Minute) // если была ошибка пробуем через минуту, если ошибка пропала, то вернем часовой интервал
+			t.Reset(time.Minute) // если была ошибка пробуем через минуту
 		} else {
 			t.Reset(time.Hour)
 		}
@@ -211,7 +262,6 @@ func (exp *ExporterInfobaseInfo) fillBaseList() {
 			return
 		}
 	}
-
 }
 
 func (exp *ExporterInfobaseInfo) getListInfobase() error {
@@ -251,33 +301,43 @@ func (exp *ExporterInfobaseInfo) GetType() model.MetricType {
 	return model.TypeRAC
 }
 
-// func (exp *ExporterInfobaseInfo) GetName() string {
-// 	return "ibinfo"
-// }
-
 func (exp *ExporterInfobaseInfo) setAllowedReading(isOk bool) {
+	exp.mx.Lock()
+	defer exp.mx.Unlock()
+
 	if isOk {
 		if exp.nextScrapeTime != nil {
 			exp.logger.Info("Отключено ограничение чтения")
+			exp.nextScrapeTime = nil
+			exp.currentBackoff = 0
 		}
-		exp.nextScrapeTime = nil
 	} else {
+		now := time.Now()
+
 		if exp.nextScrapeTime == nil {
-			exp.nextScrapeTime = new(time.Time)
-			*exp.nextScrapeTime = time.Now().Add(time.Second * 30)
+			exp.currentBackoff = initialBackoff
+			next := now.Add(exp.currentBackoff)
+			exp.nextScrapeTime = &next
 			exp.logger.Info("Включено ограничение чтения")
 		} else {
-			befr := time.Now().Sub(*exp.nextScrapeTime)
-			aftr := time.Duration(float64(befr) * 1.2)
-			if aftr > time.Hour {
-				aftr = time.Hour
+			exp.currentBackoff = time.Duration(float64(exp.currentBackoff) * backoffFactor)
+			if exp.currentBackoff > maxBackoff {
+				exp.currentBackoff = maxBackoff
 			}
-			*exp.nextScrapeTime = time.Now().Add(aftr)
+
+			next := now.Add(exp.currentBackoff)
+			exp.nextScrapeTime = &next
+			exp.logger.Debugf("Увеличена задержка до %v", exp.currentBackoff)
 		}
 	}
 }
 
 func (exp *ExporterInfobaseInfo) isAllowedReading() bool {
-	now := time.Now() // Для отладки
-	return exp.nextScrapeTime == nil || (exp.nextScrapeTime != nil && now.After(*exp.nextScrapeTime))
+	exp.mx.RLock()
+	defer exp.mx.RUnlock()
+
+	if exp.nextScrapeTime == nil {
+		return true
+	}
+	return time.Now().After(*exp.nextScrapeTime)
 }
