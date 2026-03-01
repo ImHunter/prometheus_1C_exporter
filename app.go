@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,7 +11,6 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -325,18 +323,30 @@ func (a *app) getLog(w http.ResponseWriter, r *http.Request) {
 
 	mode, n, from := a.parseLogParams(r)
 
-	// Читаем нужный диапазон лога
-	lines, start, end, total, err := a.readLogRange(mode, n, from)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	var cfg *logger.ReadConfig
+
+	switch mode {
+	case "first":
+		cfg = &logger.ReadConfig{Count: n}
+	case "last":
+		cfg = &logger.ReadConfig{Count: -n}
+	case "range":
+		cfg = &logger.ReadConfig{
+			StartLine: int64(from),
+			EndLine:   int64(from + n - 1),
+		}
+	default:
+		http.Error(w, fmt.Sprintf("invalid mode: %s", mode), http.StatusBadRequest)
 		return
 	}
 
-	// Выводим результат
-	fmt.Fprintf(w, "=== Lines %d to %d of %d ===\n\n", start, end, total)
-	for i, line := range lines {
-		fmt.Fprintf(w, "%6d: %s\n", start+i, line)
+	result, err := logger.ReadLogs(cfg)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read logs: %v", err), http.StatusInternalServerError)
+		return
 	}
+
+	a.writeLogResponse(w, result, n)
 }
 
 // parseLogParams парсит параметры запроса
@@ -345,9 +355,17 @@ func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
 	n, _ = strconv.Atoi(r.URL.Query().Get("n"))
 	from, _ = strconv.Atoi(r.URL.Query().Get("from"))
 
-	if n <= 0 || n > 10000 {
-		n = 100
+	// Если mode не передан, устанавливаем "last"
+	if mode == "" {
+		mode = "last"
 	}
+
+	// Если n не передан или некорректный, используем значение по умолчанию из логгера
+	if n <= 0 || n > 10000 {
+		n = logger.DefaultPageSize // теперь константа экспортирована
+	}
+
+	// from по умолчанию 1
 	if from < 1 {
 		from = 1
 	}
@@ -355,154 +373,31 @@ func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
 	return mode, n, from
 }
 
-func (a *app) readLogRange(mode string, n, from int) ([]string, int, int, int, error) {
-	// Формируем путь к файлу
-	logPath := filepath.Join("logs", "log.txt")
-	if a.settings.LogDir != "" {
-		logPath = filepath.Join(a.settings.LogDir, "log.txt")
+func (a *app) writeLogResponse(w http.ResponseWriter, result *logger.ReadResult, n int) {
+	if len(result.Entries) == 0 {
+		fmt.Fprintf(w, "=== No entries found ===\n")
+		return
 	}
 
-	// Открываем файл
-	file, err := os.Open(logPath)
-	if err != nil {
-		return nil, 0, 0, 0, err
-	}
-	defer file.Close()
+	fmt.Fprintf(w, "=== Lines %d to %d of %d ===\n\n",
+		result.FromLine, result.ToLine, result.TotalLines)
 
-	// Для режима last (по умолчанию) используем чтение с конца файла
-	if mode == "" {
-		mode = "last"
+	for _, entry := range result.Entries {
+		fmt.Fprintf(w, "%6d: %s\n", entry.LineNumber, entry.Content)
 	}
 
-	switch mode {
-	case "last":
-		return a.readLastLines(file, n)
-
-	case "first", "range":
-		scanner := bufio.NewScanner(file)
-		var result []string
-		currentLine := 1
-		total := 0
-
-		for scanner.Scan() {
-			total++
-
-			if mode == "first" && currentLine <= n {
-				result = append(result, scanner.Text())
-			} else if mode == "range" && currentLine >= from && currentLine < from+n {
-				result = append(result, scanner.Text())
-			}
-
-			currentLine++
-		}
-
-		if err := scanner.Err(); err != nil {
-			return nil, 0, 0, 0, err
-		}
-
-		if total == 0 {
-			return nil, 0, 0, 0, fmt.Errorf("log file is empty")
-		}
-
-		if mode == "first" {
-			return result, 1, len(result), total, nil
-		} else { // range
-			if from > total {
-				return nil, 0, 0, total, fmt.Errorf("start line %d exceeds total lines %d", from, total)
-			}
-			return result, from, from + len(result) - 1, total, nil
-		}
-
-	default:
-		return nil, 0, 0, 0, fmt.Errorf("invalid mode: %s", mode)
+	if result.HasPrev {
+		prevFrom := max(1, result.FromLine-int64(n))
+		fmt.Fprintf(w, "\n[Previous page: mode=range&from=%d&n=%d]\n", prevFrom, n)
+	}
+	if result.HasMore {
+		fmt.Fprintf(w, "\n[Next page: mode=range&from=%d&n=%d]\n", result.ToLine+1, n)
 	}
 }
 
-// readLastLines читает последние N строк
-func (a *app) readLastLines(file *os.File, n int) ([]string, int, int, int, error) {
-	// Получаем размер файла
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, 0, 0, 0, err
+func max(a, b int64) int64 {
+	if a > b {
+		return a
 	}
-
-	if stat.Size() == 0 {
-		return nil, 0, 0, 0, fmt.Errorf("log file is empty")
-	}
-
-	// Читаем с конца файла блоками
-	blockSize := int64(8192) // 8KB
-	fileSize := stat.Size()
-	offset := fileSize
-
-	var data []byte
-	var lines []string
-
-	// Читаем блоки с конца, пока не наберем нужное количество строк
-	for offset > 0 && len(lines) <= n {
-		readSize := blockSize
-		if offset < readSize {
-			readSize = offset
-		}
-
-		offset -= readSize
-		buffer := make([]byte, readSize)
-
-		_, err := file.ReadAt(buffer, offset)
-		if err != nil && err != io.EOF {
-			return nil, 0, 0, 0, err
-		}
-
-		data = append(buffer, data...)
-		lines = strings.Split(string(data), "\n")
-
-		// Если прочитали не с начала файла, отбрасываем первую частичную строку
-		if offset > 0 {
-			lines = lines[1:]
-		}
-	}
-
-	// Очищаем от пустых строк
-	clean := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if line != "" {
-			clean = append(clean, line)
-		}
-	}
-	lines = clean
-
-	// Берем последние n строк
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-
-	// Подсчитываем общее количество строк
-	total := a.countLines(file)
-
-	startLine := total - len(lines) + 1
-	if startLine < 1 {
-		startLine = 1
-	}
-
-	return lines, startLine, startLine + len(lines) - 1, total, nil
-}
-
-// countLines подсчитывает общее количество строк в файле
-func (a *app) countLines(file *os.File) int {
-	// Сохраняем текущую позицию
-	currentPos, _ := file.Seek(0, io.SeekCurrent)
-
-	// Возвращаемся в начало
-	file.Seek(0, io.SeekStart)
-
-	scanner := bufio.NewScanner(file)
-	count := 0
-	for scanner.Scan() {
-		count++
-	}
-
-	// Восстанавливаем позицию
-	file.Seek(currentPos, io.SeekStart)
-
-	return count
+	return b
 }
