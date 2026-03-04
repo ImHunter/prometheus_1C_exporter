@@ -73,15 +73,15 @@ type Settings struct {
 
 	mx *sync.RWMutex `yaml:"-"`
 	// login, pass string        `yaml:"-"`
-	bases []Bases `yaml:"-"`
+	bases []InfobaseCredentials `yaml:"-"`
 
 	LogLevel int `yaml:"LogLevel" default:"4"` // Уровень логирования от 2 до 6, где 2 - ошибка, 3 - предупреждение, 4 - информация, 5 - дебаг, 6 - трейс
 }
 
-type Bases struct {
-	Name     string `json:"Name,omitempty"`
-	UserName string `json:"UserName,omitempty"`
-	UserPass string `json:"UserPass,omitempty"`
+type InfobaseCredentials struct {
+	Name     string `json:"Name,omitempty" yaml:"Name,omitempty"`
+	UserName string `json:"UserName,omitempty" yaml:"UserName,omitempty"`
+	UserPass string `json:"UserPass,omitempty" yaml:"UserPass,omitempty"`
 }
 
 func LoadSettings(filePath string) (*Settings, error) {

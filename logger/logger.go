@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	DefaultLogDir      = "logs"
-	DefaultLogFilename = "log.txt"
+	defaultLogDir      = "logs"
+	defaultLogFilename = "log.txt"
 	DefaultPageSize    = 50
 )
 
@@ -41,11 +41,11 @@ var (
 func init() {
 	atom = zap.NewAtomicLevel()
 	NopLogger = newNopLogger()
-	DefaultLogger = newLogger(filepath.Join("", DefaultLogDir))
+	DefaultLogger = newLogger(filepath.Join("", defaultLogDir))
 }
 
 func InitLogger(logDir string, ll int) {
-	DefaultLogger = newLogger(filepath.Join(logDir, DefaultLogDir))
+	DefaultLogger = newLogger(filepath.Join(logDir, defaultLogDir))
 	SetLevel(ll)
 }
 
@@ -56,7 +56,7 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		logWriter = os.Stdout
 		currentLogFile = "stdout"
 	} else {
-		logPath := filepath.Join(logDir, DefaultLogFilename)
+		logPath := filepath.Join(logDir, defaultLogFilename)
 		currentLogFile = logPath
 
 		logWriter = &lumberjack.Logger{

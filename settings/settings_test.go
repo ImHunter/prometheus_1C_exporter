@@ -89,7 +89,7 @@ func Test_LoadSettings(t *testing.T) {
 func Test_GetLogPass(t *testing.T) {
 	s := &Settings{
 		mx: new(sync.RWMutex),
-		bases: []Bases{
+		bases: []InfobaseCredentials{
 			{
 				Name:     "test",
 				UserName: "user1",
@@ -112,7 +112,7 @@ func Test_GetLogPass(t *testing.T) {
 func Fuzz_GetLogPass(f *testing.F) {
 	s := &Settings{
 		mx: new(sync.RWMutex),
-		bases: []Bases{
+		bases: []InfobaseCredentials{
 			{
 				Name:     "test",
 				UserName: "user1",

@@ -261,8 +261,6 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 	if exitCodeStr != "" {
 		if code, err := strconv.Atoi(exitCodeStr); err == nil {
 			exitCode = code
-		} else {
-			exitCode = 1
 		}
 	}
 
@@ -346,36 +344,8 @@ func (a *app) getLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.writeLogResponse(w, result, n)
-}
-
-// parseLogParams парсит параметры запроса
-func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
-	mode = r.URL.Query().Get("mode")
-	n, _ = strconv.Atoi(r.URL.Query().Get("n"))
-	from, _ = strconv.Atoi(r.URL.Query().Get("from"))
-
-	// Если mode не передан, устанавливаем "last"
-	if mode == "" {
-		mode = "last"
-	}
-
-	// Если n не передан или некорректный, используем значение по умолчанию из логгера
-	if n <= 0 || n > 10000 {
-		n = logger.DefaultPageSize // теперь константа экспортирована
-	}
-
-	// from по умолчанию 1
-	if from < 1 {
-		from = 1
-	}
-
-	return mode, n, from
-}
-
-func (a *app) writeLogResponse(w http.ResponseWriter, result *logger.ReadResult, n int) {
 	if len(result.Entries) == 0 {
-		fmt.Fprintf(w, "=== No entries found ===\n")
+		fmt.Fprintf(w, "=== No log entries found ===\n")
 		return
 	}
 
@@ -386,18 +356,25 @@ func (a *app) writeLogResponse(w http.ResponseWriter, result *logger.ReadResult,
 		fmt.Fprintf(w, "%6d: %s\n", entry.LineNumber, entry.Content)
 	}
 
-	if result.HasPrev {
-		prevFrom := max(1, result.FromLine-int64(n))
-		fmt.Fprintf(w, "\n[Previous page: mode=range&from=%d&n=%d]\n", prevFrom, n)
-	}
-	if result.HasMore {
-		fmt.Fprintf(w, "\n[Next page: mode=range&from=%d&n=%d]\n", result.ToLine+1, n)
-	}
 }
 
-func max(a, b int64) int64 {
-	if a > b {
-		return a
+// parseLogParams парсит параметры запроса
+func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
+	mode = r.URL.Query().Get("mode")
+	n, _ = strconv.Atoi(r.URL.Query().Get("n"))
+	from, _ = strconv.Atoi(r.URL.Query().Get("from"))
+
+	if mode == "" {
+		mode = "last"
 	}
-	return b
+
+	if n <= 0 || n > 1000 {
+		n = logger.DefaultPageSize
+	}
+
+	if from < 1 {
+		from = 1
+	}
+
+	return mode, n, from
 }
