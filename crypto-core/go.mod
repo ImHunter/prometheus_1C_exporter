@@ -1,0 +1,3 @@
+module crypto-core
+
+go 1.25.1
