@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"crypto-core/keymanager"
+
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -35,37 +37,35 @@ type app struct {
 	cancel      context.CancelFunc
 	osRegistry  *prometheus.Registry
 	racRegistry *prometheus.Registry
+	keyManager  *keymanager.KeyManager
 }
 
 func (a *app) Init(_ svc.Environment) (err error) {
+
 	expl.InitMeterFunctions()
 	a.metric, err = new(expl.Metrics).FillMetrics(a.settings)
 	if err != nil {
 		return err
 	}
+
+	km, err := keymanager.NewKeyManager(a.settings.RAC.Host, a.settings.RAC.Port)
+	a.keyManager = km
+	if err != nil {
+		logger.Errorf("Failed to init keymanager: %v", err)
+	}
+
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	a.osRegistry = prometheus.NewRegistry()
 	a.racRegistry = prometheus.NewRegistry()
 
-	// lic := new(expl.ExporterClientLic).Construct(a.settings)             // Клиентские лицензии
-	// perf := new(expl.ExporterAvailablePerformance).Construct(a.settings) // Доступная производительность
-	// sJob := new(expl.ExporterCheckSheduleJob).Construct(a.settings)      // Проверка галки "блокировка регламентных заданий"
-	// iin := new(expl.ExporterInfobaseInfo).Construct(a.settings)          // Информация о запретах в информационной базе
-	// ses := new(expl.ExporterSessions).Construct(a.settings)              // Сеансы
-	// conn := new(expl.ExporterConnects).Construct(a.settings)             // Соединения
-	// currentMem := new(expl.ExporterSessionsData).Construct(a.settings)   // Текущая память сеанса
-	// cpu := new(expl.CPU).Construct(a.settings)                           // CPU
-	// proc := new(expl.Processes).Construct(a.settings)                    // Данные CPU/память в разрезе процессов
-	// disk := new(expl.ExporterDisk).Construct(a.settings)                 // Диск
-
-	// a.metric.AppendExporter(proc, cpu, disk, currentMem, lic, perf, sJob, ses, conn, iin)
 	a.initHTTP()
 
 	return nil
 }
 
 func (a *app) Start() error {
+
 	logger.DefaultLogger.Info("Запущен сбор метрик: ", strings.Join(a.metric.Metrics, ","))
 	fmt.Println("port :", a.port)
 
@@ -98,7 +98,7 @@ func (a *app) Stop() error {
 func (a *app) reloadWatcher() {
 	// Обработка сигала от ОС
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGHUP) // SIGHUP получаем при отпавки reload
+	signal.Notify(c, syscall.SIGHUP) // SIGHUP получаем при отправке reload
 
 	<-c
 
@@ -109,7 +109,7 @@ func (a *app) renewSettings() {
 
 	news, err := settings.LoadSettings(a.settings.SettingsPath)
 	if err != nil {
-		logger.DefaultLogger.Error(err)
+		logger.Error(err)
 		os.Exit(1)
 	}
 	*a.settings = *news
@@ -119,6 +119,12 @@ func (a *app) renewSettings() {
 	a.unregisterAll()
 	a.metric.FillMetrics(a.settings)
 	a.register()
+
+	km, err := keymanager.NewKeyManager(a.settings.RAC.Host, a.settings.RAC.Port)
+	a.keyManager = km
+	if err != nil {
+		logger.Errorf("keymanager init error: %w", err)
+	}
 
 	logger.DefaultLogger.Info("Обновлены настройки")
 }
@@ -144,6 +150,9 @@ func (a *app) initHTTP() {
 
 	siteMux.HandleFunc("/", a.homePage)
 	siteMux.HandleFunc("/log", a.getLog)
+
+	siteMux.HandleFunc("POST /set_secrets", a.setSecretsHandler)
+	siteMux.HandleFunc("/public-key", a.publicKeyHandler)
 
 	a.httpSrv = &http.Server{
 		Handler: siteMux,
@@ -377,4 +386,57 @@ func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
 	}
 
 	return mode, n, from
+}
+
+// setSecretsHandler принимает зашифрованные данные, расшифровывает и сохраняет.
+func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		EncryptedData []byte `json:"encrypted_data"` // base64-encoded зашифрованный пакет
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+
+	// Расшифровываем
+	plaintext, err := a.keyManager.Decrypt(req.EncryptedData)
+	if err != nil {
+		http.Error(w, "decryption failed", http.StatusBadRequest)
+		return
+	}
+
+	// Парсим JSON с секретами
+	var secrets settings.IBCredentials
+	if err := json.Unmarshal(plaintext, &secrets); err != nil {
+		http.Error(w, "invalid secrets format", http.StatusBadRequest)
+		return
+	}
+
+	// Сохраняем в настройках
+	a.settings.UpdateSecrets(&secrets)
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "secrets updated")
+}
+
+// publicKeyHandler отдаёт публичный ключ в формате PEM.
+func (a *app) publicKeyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pem, err := a.keyManager.PublicKeyPEM()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Write([]byte(pem))
 }

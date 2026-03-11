@@ -42,11 +42,15 @@ type Settings struct {
 	} `yaml:"Exporters"`
 
 	DBCredentials *struct {
-		URL           string `yaml:"URL" json:"URL,omitempty"`
-		User          string `yaml:"User" json:"user,omitempty"`
-		Password      string `yaml:"Password" json:"password,omitempty"`
-		TLSSkipVerify bool   `yaml:"TLSSkipVerify" json:"TLSSkipVerify,omitempty"`
+		URL           string          `yaml:"URL" json:"URL,omitempty"`
+		User          string          `yaml:"User" json:"user,omitempty"`
+		Password      string          `yaml:"Password" json:"password,omitempty"`
+		TLSSkipVerify bool            `yaml:"TLSSkipVerify" json:"TLSSkipVerify,omitempty"`
+		GitLab        *GitLabSettings `yaml:"GitLab,omitempty"`
 	} `yaml:"DBCredentials"`
+
+	secrets   *IBCredentials
+	secretsMu sync.RWMutex
 
 	RAC *struct {
 		Path  string `yaml:"Path"`
@@ -82,6 +86,26 @@ type InfobaseCredentials struct {
 	Name     string `json:"Name,omitempty" yaml:"Name,omitempty"`
 	UserName string `json:"UserName,omitempty" yaml:"UserName,omitempty"`
 	UserPass string `json:"UserPass,omitempty" yaml:"UserPass,omitempty"`
+}
+
+type GitLabSettings struct {
+	RepoURL      string `yaml:"RepoURL"`
+	Branch       string `yaml:"Branch"`
+	TriggerToken string `yaml:"TriggerToken"`
+	SecretsFile  string `yaml:"SecretsFile"`
+	ProjectID    int    `yaml:"ProjectID"`
+}
+
+// Структуры для секретов
+type IBCred struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+type IBCredentials struct {
+	RAS          *IBCred           `json:"ras,omitempty"`
+	IbaseDefault *IBCred           `json:"ibase_default,omitempty"`
+	Ibases       map[string]IBCred `json:"ibases,omitempty"`
 }
 
 func LoadSettings(filePath string) (*Settings, error) {
@@ -299,4 +323,10 @@ func request(url, log, pass string, tlsConf *tls.Config) ([]byte, error) {
 		defer resp.Body.Close()
 		return body, nil
 	}
+}
+
+func (s *Settings) UpdateSecrets(sec *IBCredentials) {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	s.secrets = sec
 }
