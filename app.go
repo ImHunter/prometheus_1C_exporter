@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -54,6 +55,21 @@ func (a *app) Init(_ svc.Environment) (err error) {
 		logger.Errorf("Failed to init keymanager: %v", err)
 	}
 
+	// Попытка загрузить последние секреты с диска
+	if a.keyManager != nil {
+		decrypted, err := a.keyManager.LoadLastSecrets()
+		if err == nil {
+			var secrets settings.IBCredentials
+			if json.Unmarshal(decrypted, &secrets) == nil {
+				a.settings.UpdateSecrets(&secrets)
+				logger.DefaultLogger.Info("Loaded last secrets from disk")
+			}
+		} else if !os.IsNotExist(err) {
+			// Файл отсутствует – нормально при первом запуске
+			logger.DefaultLogger.Warnf("Failed to load secrets from disk: %v", err)
+		}
+	}
+
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	a.osRegistry = prometheus.NewRegistry()
@@ -65,18 +81,26 @@ func (a *app) Init(_ svc.Environment) (err error) {
 }
 
 func (a *app) Start() error {
-
 	logger.DefaultLogger.Info("Запущен сбор метрик: ", strings.Join(a.metric.Metrics, ","))
 	fmt.Println("port :", a.port)
-
-	// if a.metric.Contains("shedule_job") && (a.settings.DBCredentials == nil || a.settings.DBCredentials.URL == "") {
-	// 	return errors.New("для метрики \"shedule_job\" обязательно должен быть заполнен параметр DBCredentials")
-	// }
 
 	go a.settings.GetDBCredentials(a.ctx, expl.CForce)
 	go a.reloadWatcher()
 
 	a.register()
+
+	// Если включён режим gitlab, запускаем пайплайн для получения секретов
+	if a.gitlabSecretsAvailable() {
+		go func() {
+			// Небольшая задержка, чтобы сервер успел запуститься
+			time.Sleep(5 * time.Second)
+			if err := a.triggerPipeline(); err != nil {
+				logger.DefaultLogger.Errorf("Failed to trigger pipeline on start: %v", err)
+			}
+		}()
+	}
+
+	// Запуск HTTP-сервера
 	go func() {
 		if err := a.httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.DefaultLogger.Error(err)
@@ -84,6 +108,7 @@ func (a *app) Start() error {
 	}()
 
 	return nil
+
 }
 
 func (a *app) Stop() error {
@@ -106,27 +131,41 @@ func (a *app) reloadWatcher() {
 }
 
 func (a *app) renewSettings() {
-
 	news, err := settings.LoadSettings(a.settings.SettingsPath)
 	if err != nil {
 		logger.Error(err)
 		os.Exit(1)
 	}
-	*a.settings = *news
 
+	a.settings.AssignFrom(news)
 	logger.InitLogger(a.settings.LogDir, a.settings.LogLevel)
 
 	a.unregisterAll()
 	a.metric.FillMetrics(a.settings)
 	a.register()
 
-	km, err := keymanager.NewKeyManager(a.settings.RAC.Host, a.settings.RAC.Port)
-	a.keyManager = km
-	if err != nil {
-		logger.Errorf("keymanager init error: %w", err)
+	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port())
+	if err == nil {
+		a.keyManager = km
+		logger.DefaultLogger.Info("KeyManager reinitialized")
+	} else {
+		logger.DefaultLogger.Errorf("keymanager init failed: %v", err)
+		if a.settings.GitlabSecretsEnabled() {
+			logger.Error("Cannot run in gitlab mode without keymanager, exiting")
+			os.Exit(1)
+		}
+		a.keyManager = nil
 	}
 
-	logger.DefaultLogger.Info("Обновлены настройки")
+	// Если GitLab-секреты доступны, запускаем пайплайн
+	if a.gitlabSecretsAvailable() {
+		go func() {
+			time.Sleep(2 * time.Second)
+			if err := a.triggerPipeline(); err != nil {
+				logger.DefaultLogger.Errorf("Failed to trigger pipeline after reload: %v", err)
+			}
+		}()
+	}
 }
 
 func (a *app) initHTTP() {
@@ -153,11 +192,6 @@ func (a *app) initHTTP() {
 
 	siteMux.HandleFunc("POST /set_secrets", a.setSecretsHandler)
 	siteMux.HandleFunc("/public-key", a.publicKeyHandler)
-
-	a.httpSrv = &http.Server{
-		Handler: siteMux,
-		Addr:    ":" + a.port,
-	}
 
 	a.httpSrv = &http.Server{
 		Handler: siteMux,
@@ -395,6 +429,15 @@ func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !a.gitlabSecretsAvailable() {
+		http.Error(w, "GitLab secrets not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	if a.keyManager == nil {
+		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
 	var req struct {
 		EncryptedData []byte `json:"encrypted_data"` // base64-encoded зашифрованный пакет
 	}
@@ -420,6 +463,12 @@ func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
 	// Сохраняем в настройках
 	a.settings.UpdateSecrets(&secrets)
 
+	// Сохраняем последние секреты на диск (для холодного старта)
+	if err := a.keyManager.SaveLastSecrets(plaintext); err != nil {
+		// Ошибка сохранения не критична, но логируем
+		logger.DefaultLogger.Errorf("Failed to save secrets to disk: %v", err)
+	}
+
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "secrets updated")
 }
@@ -431,6 +480,10 @@ func (a *app) publicKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if a.keyManager == nil {
+		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
 	pem, err := a.keyManager.PublicKeyPEM()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -439,4 +492,57 @@ func (a *app) publicKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Write([]byte(pem))
+}
+
+func (a *app) triggerPipeline() error {
+	if !a.gitlabSecretsAvailable() {
+		logger.DefaultLogger.Debug("triggerPipeline: gitlab secrets not available, skipping")
+		return nil
+	}
+	gl := a.settings.DBCredentials.GitLab
+	// Дополнительная валидация полей (можно оставить, но они уже должны быть)
+	if gl.RepoURL == "" || gl.Branch == "" || gl.TriggerToken == "" {
+		return fmt.Errorf("incomplete GitLab settings: RepoURL, Branch, TriggerToken required")
+	}
+
+	// Извлекаем путь проекта из RepoURL
+	// Пример: "https://gitlab.example.com/namespace/project.git" -> "namespace/project"
+	parsed, err := url.Parse(gl.RepoURL)
+	if err != nil {
+		return fmt.Errorf("invalid RepoURL: %w", err)
+	}
+	projectPath := strings.TrimPrefix(parsed.Path, "/")
+	projectPath = strings.TrimSuffix(projectPath, ".git")
+	if projectPath == "" {
+		return fmt.Errorf("could not extract project path from RepoURL")
+	}
+	// Кодируем путь для использования в URL (заменяет / на %2F)
+	encodedPath := url.PathEscape(projectPath)
+
+	// Формируем URL для trigger API
+	baseURL := strings.TrimSuffix(gl.RepoURL, ".git")
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/trigger/pipeline", baseURL, encodedPath)
+
+	data := url.Values{}
+	data.Set("token", gl.TriggerToken)
+	data.Set("ref", gl.Branch)
+	if gl.SecretsFile != "" {
+		data.Set("variables[SECRETS_FILE]", gl.SecretsFile)
+	}
+
+	resp, err := http.PostForm(apiURL, data)
+	if err != nil {
+		return fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gitlab trigger failed with status %s: %s", resp.Status, body)
+	}
+	logger.DefaultLogger.Info("Pipeline triggered successfully")
+	return nil
+}
+
+func (a *app) gitlabSecretsAvailable() bool {
+	return a.settings.GitlabSecretsEnabled() && a.keyManager != nil
 }

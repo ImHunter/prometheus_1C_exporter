@@ -9,6 +9,7 @@ require (
 	github.com/creasty/defaults v1.8.0
 	github.com/golang/mock v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/jinzhu/copier v0.4.0
 	github.com/judwhite/go-svc v1.2.1
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2

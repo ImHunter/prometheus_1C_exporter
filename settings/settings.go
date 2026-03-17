@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -12,11 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"io"
-
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/beevik/etree"
 	"github.com/creasty/defaults"
+	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
 	yaml "gopkg.in/yaml.v2"
 )
@@ -28,6 +28,14 @@ const (
 	KindSummary         TypeMetricKind = "Summary"
 	KindGauge           TypeMetricKind = "Gauge"
 	KindNativeHistogram TypeMetricKind = "NativeHistogram"
+)
+
+type TypeCredentialsSource string
+
+const (
+	CredentialsSourceUndefined TypeCredentialsSource = ""       // не задан (по умолчанию будет plain)
+	CredentialsSourcePlain     TypeCredentialsSource = "plain"  // внешний сервис
+	CredentialsSourceGitLab    TypeCredentialsSource = "gitlab" // через GitLab
 )
 
 type TypeHostLabelFrom string
@@ -42,11 +50,12 @@ type Settings struct {
 	} `yaml:"Exporters"`
 
 	DBCredentials *struct {
-		URL           string          `yaml:"URL" json:"URL,omitempty"`
-		User          string          `yaml:"User" json:"user,omitempty"`
-		Password      string          `yaml:"Password" json:"password,omitempty"`
-		TLSSkipVerify bool            `yaml:"TLSSkipVerify" json:"TLSSkipVerify,omitempty"`
-		GitLab        *GitLabSettings `yaml:"GitLab,omitempty"`
+		URL           string                `yaml:"URL"`              // URL внешнего сервиса (для plain)
+		User          string                `yaml:"User"`             // пользователь для внешнего сервиса (plain)
+		Password      string                `yaml:"Password"`         // пароль для внешнего сервиса (plain)
+		TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`    // пропускать проверку TLS (plain)
+		Source        TypeCredentialsSource `yaml:"Source"`           // источник: "", "plain" или "gitlab"
+		GitLab        *GitLabSettings       `yaml:"GitLab,omitempty"` // параметры GitLab (если Source == "gitlab")
 	} `yaml:"DBCredentials"`
 
 	secrets   *IBCredentials
@@ -66,17 +75,16 @@ type Settings struct {
 	} `yaml:"MetricKinds" default:"{\"Session\": [\"Summary\"], \"SessionsData\": [\"Summary\"]}"`
 
 	Other *struct {
-		MetricNamePrefix string `yaml:"MetricNamePrefix"`
-		UseExemplars     bool   `yaml:"UseExemplars" default:"false"`
-		// DisableGoCollector bool   `yaml:"DisableGoCollector" default:"false"`
+		MetricNamePrefix   string `yaml:"MetricNamePrefix"`
+		UseExemplars       bool   `yaml:"UseExemplars" default:"false"`
+		DisableGoCollector bool   `yaml:"DisableGoCollector" default:"false"`
 	} `yaml:"Other"`
 
 	WinSW *struct {
 		ConfigFile string `yaml:"ConfigFile"`
 	} `yaml:"WinSW"`
 
-	mx *sync.RWMutex `yaml:"-"`
-	// login, pass string        `yaml:"-"`
+	mx    *sync.RWMutex         `yaml:"-"`
 	bases []InfobaseCredentials `yaml:"-"`
 
 	LogLevel int `yaml:"LogLevel" default:"4"` // Уровень логирования от 2 до 6, где 2 - ошибка, 3 - предупреждение, 4 - информация, 5 - дебаг, 6 - трейс
@@ -88,12 +96,12 @@ type InfobaseCredentials struct {
 	UserPass string `json:"UserPass,omitempty" yaml:"UserPass,omitempty"`
 }
 
+// GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	RepoURL      string `yaml:"RepoURL"`
-	Branch       string `yaml:"Branch"`
-	TriggerToken string `yaml:"TriggerToken"`
-	SecretsFile  string `yaml:"SecretsFile"`
-	ProjectID    int    `yaml:"ProjectID"`
+	RepoURL      string `yaml:"RepoURL"`      // адрес репозитория, например "https://gitlab.example.com/group/project.git"
+	Branch       string `yaml:"Branch"`       // ветка, например "web"
+	TriggerToken string `yaml:"TriggerToken"` // токен для запуска пайплайнов
+	SecretsFile  string `yaml:"SecretsFile"`  // имя файла с зашифрованными секретами (по умолчанию "secrets.json.enc")
 }
 
 // Структуры для секретов
@@ -106,6 +114,10 @@ type IBCredentials struct {
 	RAS          *IBCred           `json:"ras,omitempty"`
 	IbaseDefault *IBCred           `json:"ibase_default,omitempty"`
 	Ibases       map[string]IBCred `json:"ibases,omitempty"`
+}
+
+func (s *Settings) AssignFrom(src *Settings) error {
+	return copier.Copy(s, src)
 }
 
 func LoadSettings(filePath string) (*Settings, error) {
@@ -140,7 +152,7 @@ func LoadSettings(filePath string) (*Settings, error) {
 	return s, nil
 }
 
-func (s *Settings) GetLogPass(ibname string) (login, pass string) {
+func (s *Settings) getLogPass(ibname string) (login, pass string) {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
@@ -153,6 +165,23 @@ func (s *Settings) GetLogPass(ibname string) (login, pass string) {
 	}
 
 	return
+}
+
+// GetLogPass возвращает логин и пароль для базы с именем ibName
+// (используется в explorers/exporterIbInfo.go)
+func (s *Settings) GetLogPass(ibName string) (login, pass string) {
+	s.secretsMu.RLock()
+	sec := s.secrets
+	s.secretsMu.RUnlock()
+
+	// Пытаемся получить из GitLab-секретов (работает только в режиме gitlab)
+	if sec != nil {
+		if l, p, ok := sec.getForBase(ibName); ok {
+			return l, p
+		}
+	}
+	// Если нет, используем метод plain
+	return s.getLogPass(ibName)
 }
 
 func (s *Settings) RAC_Path() string {
@@ -170,6 +199,7 @@ func (s *Settings) RAC_Port() string {
 }
 
 func (s *Settings) RAC_Host() string {
+
 	if s.RAC != nil {
 		return s.RAC.Host
 	}
@@ -177,6 +207,9 @@ func (s *Settings) RAC_Host() string {
 }
 
 func (s *Settings) RAC_Login() string {
+	if s.secrets != nil && s.secrets.RAS != nil {
+		return s.secrets.RAS.Login
+	}
 	if s.RAC != nil {
 		return s.RAC.Login
 	}
@@ -184,6 +217,9 @@ func (s *Settings) RAC_Login() string {
 }
 
 func (s *Settings) RAC_Pass() string {
+	if s.secrets != nil && s.secrets.RAS != nil {
+		return s.secrets.RAS.Password
+	}
 	if s.RAC != nil {
 		return s.RAC.Pass
 	}
@@ -208,12 +244,12 @@ func (s *Settings) GetRASHostPort() string {
 	return rasHostPort
 }
 
-// func (s *Settings) GetDisableGoCollector() bool {
-// 	if s.Other != nil {
-// 		return s.Other.DisableGoCollector
-// 	}
-// 	return false
-// }
+func (s *Settings) GetDisableGoCollector() bool {
+	if s.Other != nil {
+		return s.Other.DisableGoCollector
+	}
+	return false
+}
 
 func (s *Settings) GetDBCredentials(ctx context.Context, cForce chan struct{}) {
 	if s.DBCredentials == nil || s.DBCredentials.URL == "" {
@@ -224,14 +260,14 @@ func (s *Settings) GetDBCredentials(ctx context.Context, cForce chan struct{}) {
 		s.mx.Lock()
 		defer s.mx.Unlock()
 
-		logger.DefaultLogger.With("URL", s.DBCredentials.URL).Info("обращаемся к REST")
+		logger.With("URL", s.DBCredentials.URL).Info("обращаемся к REST")
 		tlsConf := &tls.Config{InsecureSkipVerify: s.DBCredentials.TLSSkipVerify}
 		data, err := request(s.DBCredentials.URL, s.DBCredentials.User, s.DBCredentials.Password, tlsConf)
 		if err != nil {
-			logger.DefaultLogger.Error(errors.Wrap(err, "ошибка получения данных по БД"))
+			logger.Error(errors.Wrap(err, "ошибка получения данных по БД"))
 		}
 		if err := json.Unmarshal(data, &s.bases); err != nil {
-			logger.DefaultLogger.Error(errors.Wrap(err, "не удалось десериализовать данные от REST"))
+			logger.Error(errors.Wrap(err, "не удалось десериализовать данные от REST"))
 		}
 	}
 
@@ -244,10 +280,10 @@ f:
 	for {
 		select {
 		case <-cForce:
-			logger.DefaultLogger.Info("Принудительно запрашиваем список баз из REST")
+			logger.Info("Принудительно запрашиваем список баз из REST")
 			get()
 		case <-timer.C:
-			logger.DefaultLogger.Info("Планово запрашиваем список баз из REST")
+			logger.Info("Планово запрашиваем список баз из REST")
 			get()
 		case <-ctx.Done():
 			break f
@@ -329,4 +365,33 @@ func (s *Settings) UpdateSecrets(sec *IBCredentials) {
 	s.secretsMu.Lock()
 	defer s.secretsMu.Unlock()
 	s.secrets = sec
+}
+
+func (s *Settings) GitlabSecretsEnabled() bool {
+	if s.DBCredentials == nil {
+		return false
+	}
+	if s.DBCredentials.Source != CredentialsSourceGitLab {
+		return false
+	}
+	if s.DBCredentials.GitLab == nil {
+		// Если режим gitlab включён, но секция отсутствует – это ошибка конфигурации
+		logger.Error("GitLab mode is enabled but GitLab settings are missing")
+		return false
+	}
+	return true
+}
+
+// Возвращает логин, пароль и флаг успеха.
+func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) {
+	if c == nil {
+		return "", "", false
+	}
+	if cred, exists := c.Ibases[ibName]; exists {
+		return cred.Login, cred.Password, true
+	}
+	if c.IbaseDefault != nil {
+		return c.IbaseDefault.Login, c.IbaseDefault.Password, true
+	}
+	return "", "", false
 }

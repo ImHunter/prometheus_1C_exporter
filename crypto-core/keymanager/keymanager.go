@@ -235,3 +235,30 @@ func sanitize(s string) string {
 	}
 	return string(result)
 }
+
+// SaveLastSecrets шифрует и сохраняет последние секреты в файл secrets.enc в директории ключей.
+func (km *KeyManager) SaveLastSecrets(plaintext []byte) error {
+	if km.keysPath == "" {
+		return fmt.Errorf("keys path not set")
+	}
+	encrypted, err := km.Encrypt(plaintext) // Encrypt должен быть публичным
+	if err != nil {
+		return fmt.Errorf("failed to encrypt secrets: %w", err)
+	}
+	path := filepath.Join(km.keysPath, "secrets.enc")
+	return os.WriteFile(path, encrypted, 0600)
+}
+
+// LoadLastSecrets загружает и расшифровывает последние секреты из файла secrets.enc.
+// Возвращает расшифрованные байты, готовые к парсингу.
+func (km *KeyManager) LoadLastSecrets() ([]byte, error) {
+	if km.keysPath == "" {
+		return nil, fmt.Errorf("keys path not set")
+	}
+	path := filepath.Join(km.keysPath, "secrets.enc")
+	encrypted, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err // отсутствие файла – нормальная ситуация
+	}
+	return km.Decrypt(encrypted)
+}
