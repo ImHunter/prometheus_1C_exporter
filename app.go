@@ -192,6 +192,7 @@ func (a *app) initHTTP() {
 
 	siteMux.HandleFunc("POST /set_secrets", a.setSecretsHandler)
 	siteMux.HandleFunc("/public-key", a.publicKeyHandler)
+	siteMux.HandleFunc("POST /encrypt-secrets", a.encryptSecretsHandler)
 
 	a.httpSrv = &http.Server{
 		Handler: siteMux,
@@ -323,7 +324,6 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
-
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -346,11 +346,13 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 			{"path": "/shutdown_emulate", "method": "POST", "description": "Аварийное завершение"},
 			{"path": "/set_binarypath", "method": "POST", "description": "Установка источника скачивания бинарного файла, при использовании WinSW"},
 			{"path": "/log", "method": "GET", "description": "Читает содержимое лога: с начала, с конца или с произвольного места"},
+			{"path": "/public-key", "method": "GET", "description": "Возвращает публичный ключ RSA в формате PEM для шифрования секретов"},
+			{"path": "/set_secrets", "method": "POST", "description": "Принимает зашифрованные секреты и сохраняет их"},
+			{"path": "/encrypt-secrets", "method": "POST", "description": "Шифрует открытые секреты (JSON) и возвращает зашифрованный файл"},
 		},
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	encoder.Encode(info)
@@ -541,6 +543,43 @@ func (a *app) triggerPipeline() error {
 	}
 	logger.DefaultLogger.Info("Pipeline triggered successfully")
 	return nil
+}
+
+// encryptSecretsHandler принимает открытые секреты в формате JSON,
+// шифрует их публичным ключом и возвращает зашифрованные данные (raw).
+func (a *app) encryptSecretsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if a.keyManager == nil {
+		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Проверяем, что передан валидный JSON (опционально)
+	var dummy interface{}
+	if err := json.Unmarshal(body, &dummy); err != nil {
+		http.Error(w, "invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	encrypted, err := a.keyManager.Encrypt(body)
+	if err != nil {
+		http.Error(w, "encryption failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Write(encrypted)
 }
 
 func (a *app) gitlabSecretsAvailable() bool {

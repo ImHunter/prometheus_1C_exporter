@@ -105,6 +105,7 @@ scrape_configs:
 | POST | `/set_binarypath` | тело запроса содержит URL | Устанавливает новый путь к бинарному файлу в конфигурации WinSW (используется для обновления) |
 | POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода (для триггера перезапуска WinSW) |
 | POST | `/set_secrets` | JSON `{"encrypted_data": "base64..."}` | Принимает зашифрованные секреты, расшифровывает их и сохраняет в памяти |
+| POST | `/encrypt-secrets` | JSON с открытыми секретами | Принимает открытые секреты, шифрует их публичным ключом и возвращает зашифрованный файл (бинарные данные) |
 
 ### Примеры использования
 
@@ -138,11 +139,19 @@ scrape_configs:
   Возобновить сбор метрик `disk_metrics`:  
   `http://localhost:9091/Continue?metricNames=disk_metrics`
 
-#### Через curl (для всех методов)
+#### Через curl (Linux, WSL, macOS)
 
 - **Получение публичного ключа**
   ```bash
   curl http://localhost:9091/public-key > exporter.pub
+  ```
+
+- **Шифрование секретов с помощью эндпоинта `/encrypt-secrets`**
+  ```bash
+  curl -X POST http://localhost:9091/encrypt-secrets \
+      -H "Content-Type: application/json" \
+      -d @secrets.json \
+      --output secrets.json.enc
   ```
 
 - **Отправка зашифрованных секретов**
@@ -182,6 +191,55 @@ scrape_configs:
 - **Возобновление сбора метрик**
   ```bash
   curl "http://localhost:9091/Continue?metricNames=disk_metrics"
+  ```
+
+#### Через PowerShell (Windows)
+
+- **Получение публичного ключа**
+  ```powershell
+  Invoke-WebRequest -Uri http://localhost:9091/public-key -OutFile exporter.pub
+  ```
+
+- **Шифрование секретов с помощью эндпоинта `/encrypt-secrets`**
+  ```powershell
+  $body = Get-Content -Raw secrets.json
+  Invoke-RestMethod -Uri http://localhost:9091/encrypt-secrets `
+      -Method Post `
+      -Body $body `
+      -ContentType "application/json" `
+      -OutFile secrets.json.enc
+  ```
+
+- **Кодирование зашифрованного файла в base64** (для ручной отправки)
+  ```powershell
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets.json.enc"))
+  ```
+
+- **Отправка зашифрованных секретов**
+  ```powershell
+  $encrypted = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets.json.enc"))
+  $body = @{ encrypted_data = $encrypted } | ConvertTo-Json
+  Invoke-RestMethod -Uri http://localhost:9091/set_secrets -Method Post -Body $body -ContentType "application/json"
+  ```
+
+- **Установка нового пути к бинарнику**
+  ```powershell
+  Invoke-RestMethod -Uri http://localhost:9091/set_binarypath -Method Post -Body "https://gitlab.example.com/path/to/new/exporter.exe" -ContentType "text/plain"
+  ```
+
+- **Эмуляция аварийного завершения**
+  ```powershell
+  Invoke-RestMethod -Uri "http://localhost:9091/shutdown_emulate?exit_code=0" -Method Post
+  ```
+
+- **Чтение логов** (последние 50 строк)
+  ```powershell
+  Invoke-RestMethod -Uri "http://localhost:9091/log?mode=last&n=50"
+  ```
+
+- **Загрузка нового конфигурационного файла**
+  ```powershell
+  Invoke-RestMethod -Uri http://localhost:9091/set_config -Method Post -Form @{ file = Get-Item "settings.yml" }
   ```
 
 ## 📊 Метрики
@@ -264,23 +322,34 @@ scrape_configs:
 1. **Создайте отдельный GitLab-проект**, в котором будут храниться конфигурационные файлы для каждого экземпляра экспортера.
 2. **Для каждого экземпляра создайте отдельную ветку** (например, `web`, `rls`, `trade`). В каждой ветке будут находиться:
    * `settings.yml` – основной конфигурационный файл.
-   * (опционально) `secrets.json.enc` – зашифрованные секреты.
-3. **В настройках CI/CD каждой ветки задайте переменные**:
-   * `SERVER_URL` – базовый URL экспортера (например, `http://server-web:9091`). **Важно:** URL должен быть без пути, так как методы добавляются автоматически.
-   * `FILE_TO_UPLOAD` – имя файла конфигурации (обычно `settings.yml`).
-   * (опционально) `SECRETS_FILE` – имя файла с зашифрованными секретами (по умолчанию `secrets.json.enc`).
-4. **Настройте CI/CD-пайплайн**, используя шаблон, описанный ниже. Рекомендуется хранить общий код пайплайна в ветке `main` и подключать его через `include` (чтобы избежать дублирования).
+   * `secrets.json.enc` – зашифрованные секреты (опционально).
+   * `exporter-vars.yml` – файл с переменными для CI/CD (обязателен).
+3. **Содержимое `exporter-vars.yml`**:
+   ```yaml
+   variables:
+     SERVER_URL: "http://server-web:9091"   # базовый URL экспортера (без пути)
+     FILE_TO_UPLOAD: "settings.yml"         # имя файла конфигурации
+     # SECRETS_FILE: "secrets.json.enc"     # если имя отличается
+   ```
+4. **В ветке `main`** создайте файл `main-pipeline.yml` с общим кодом пайплайна (см. ниже).
+5. **В настройках CI/CD проекта** (Settings → CI/CD → General pipelines → **Custom CI configuration path**) укажите путь:  
+   `main-pipeline.yml@main`.  
+   Это заставит GitLab для всех веток, у которых нет собственного `.gitlab-ci.yml`, использовать этот файл из ветки `main`.
 
-**Пример шаблона пайплайна (в ветке `main`) – файл `ci-templates.yml`**
+**Пример `main-pipeline.yml` (ветка `main`):**
 
 ```yaml
-default:
-  image: alpine/curl:8.17.0
+# Подключаем переменные из текущей ветки (exporter-vars.yml)
+include:
+  - local: 'exporter-vars.yml'
 
 stages:
   - upload
 
-.upload_file_template:
+default:
+  image: alpine/curl:8.17.0
+
+upload_file:
   stage: upload
   rules:
     - if: $CI_COMMIT_BRANCH != "main"
@@ -290,14 +359,9 @@ stages:
     - when: never
   script:
     - echo "Uploading $FILE_TO_UPLOAD to $SERVER_URL"
-    - response=$(curl -s -w "\n%{http_code}" -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/set_config")
-    - http_code=$(echo "$response" | tail -n1)
-    - response_body=$(echo "$response" | sed '$d')
-    - echo "Response HTTP Code: $http_code"
-    - echo "Response Body: $response_body"
-    - if [[ $http_code -ge 200 && $http_code -lt 300 ]]; then echo "Success"; else exit 1; fi
+    - curl -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/set_config" --fail
 
-.send_secrets_template:
+send_secrets:
   stage: upload
   rules:
     - if: $CI_PIPELINE_SOURCE == "trigger"
@@ -313,40 +377,23 @@ stages:
     - echo "Secrets delivered"
 ```
 
-**В каждой ветке экспортера** файл `.gitlab-ci.yml` будет минимальным:
-
-```yaml
-include:
-  - project: 'your-group/your-config-project'
-    file: 'ci-templates.yml'
-    ref: main
-
-variables:
-  SERVER_URL: "http://server-web:9091"
-  FILE_TO_UPLOAD: "settings.yml"
-  # SECRETS_FILE: "secrets.json.enc"  # если имя отличается
-
-upload_file:
-  extends: .upload_file_template
-
-send_secrets:
-  extends: .send_secrets_template
-```
-
 ### 2. Обновление конфигурационного файла
 
-При каждом изменении `settings.yml` в любой ветке (кроме `main`) автоматически запускается пайплайн, который отправляет новый конфиг на соответствующий экспортер через метод `/set_config`. Экспортер применяет новые настройки без перезапуска.
+При каждом изменении `settings.yml` в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/set_config`. Экспортер применяет новые настройки без перезапуска.
 
 Для корректной работы убедитесь, что:
-* В ветке определена переменная `SERVER_URL`.
-* Пайплайн настроен согласно шаблону выше.
+* В файле `exporter-vars.yml` ветки определена переменная `SERVER_URL`.
+* Ветка `main` защищена и содержит актуальный `main-pipeline.yml`.
 
 ### 3. Безопасное хранение и доставка секретов
 
 Для работы с учётными данными баз 1С (логины/пароли) используется следующий механизм:
 
 * **Генерация ключей** – при первом запуске экспортер создаёт пару RSA-ключей (3072 бит) и сохраняет их в подкаталоге `keys/<host>_<port>/` рядом с исполняемым файлом. Приватный ключ защищён правами доступа (0600).
-* **Шифрование секретов** – администратор локально подготавливает JSON-файл с секретами следующего формата:
+* **Шифрование секретов** – администратор может зашифровать секреты двумя способами:
+  * Локально с помощью утилиты `openssl` и публичного ключа (полученного через `/public-key`).
+  * С помощью эндпоинта `/encrypt-secrets` (см. примеры выше).
+  Формат секретов:
   ```json
   {
     "ras": { "login": "admin", "password": "ras_pass" },
@@ -356,7 +403,6 @@ send_secrets:
     }
   }
   ```
-  Для шифрования используется публичный ключ экспортера (полученный через `/public-key`). Можно воспользоваться утилитой `openssl` или встроенной командой экспортера (планируется в будущем).
 * **Размещение в GitLab** – зашифрованный файл (например, `secrets.json.enc`) помещается в соответствующую ветку репозитория.
 * **Автоматическая доставка** – при изменении файла секретов или по триггеру от экспортера запускается job `send_secrets`, который отправляет зашифрованные данные на эндпоинт `/set_secrets`. Экспортер расшифровывает их и сохраняет в памяти, а также дублирует на диск (в ту же папку, где лежат ключи) для использования при холодном старте.
 * **Использование секретов** – методы `GetLogPass` и `RAC_Login/Pass` автоматически подставляют полученные учётные данные; если секреты не заданы, используется старый механизм (plain).
@@ -365,6 +411,8 @@ send_secrets:
 
 ## 📌 Примечания
 
-*   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/public-key` (см. пример выше).
+*   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/public-key` (см. примеры выше).
 *   В режиме GitLab экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
 *   При перезагрузке экспортер загружает последние сохранённые секреты с диска, поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
+*   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится централизованно в `main`.
+```
