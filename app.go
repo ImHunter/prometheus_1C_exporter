@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ type app struct {
 	osRegistry  *prometheus.Registry
 	racRegistry *prometheus.Registry
 	keyManager  *keymanager.KeyManager
+	reloadMutex sync.Mutex
 }
 
 func (a *app) Init(_ svc.Environment) (err error) {
@@ -131,6 +133,10 @@ func (a *app) reloadWatcher() {
 }
 
 func (a *app) renewSettings() {
+
+	a.reloadMutex.Lock()
+	defer a.reloadMutex.Unlock()
+
 	news, err := settings.LoadSettings(a.settings.SettingsPath)
 	if err != nil {
 		logger.Error(err)
@@ -202,26 +208,32 @@ func (a *app) initHTTP() {
 
 func (a *app) unregisterAll() {
 	for _, ex := range a.metric.Exporters {
-		prometheus.Unregister(ex)
+		if !prometheus.Unregister(ex) {
+			logger.Warnf("failed to unregister metric %s", ex.GetName())
+		}
 	}
 }
 
 func (a *app) register() {
 	for _, ex := range a.metric.Exporters {
 		if a.metric.Contains(ex.GetName()) {
-			prometheus.MustRegister(ex)
-
-			switch ex.GetType() {
-			case model.TypeOS:
-				a.osRegistry.Register(ex)
-			case model.TypeRAC:
-				a.racRegistry.Register(ex)
+			// Пытаемся зарегистрировать метрику в глобальном реестре Prometheus
+			if err := prometheus.Register(ex); err != nil {
+				// Ошибка может возникнуть, если метрика уже зарегистрирована
+				logger.Errorf("Failed to register metric %s: %v", ex.GetName(), err)
+			} else {
+				// Успешная регистрация — добавляем в специализированные реестры
+				switch ex.GetType() {
+				case model.TypeOS:
+					a.osRegistry.Register(ex)
+				case model.TypeRAC:
+					a.racRegistry.Register(ex)
+				}
 			}
-
 		} else {
 			ex.Stop()
 			prometheus.Unregister(ex)
-			logger.DefaultLogger.Debugf("Метрика %q пропущена", ex.GetName())
+			logger.Debugf("Метрика %q пропущена", ex.GetName())
 		}
 	}
 }
@@ -254,8 +266,12 @@ func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 
 	io.Copy(out, file)
 	w.WriteHeader(201)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 
-	a.renewSettings()
+	// Перезагружаем настройки в фоне, чтобы не блокировать ответ
+	go a.renewSettings()
 
 }
 

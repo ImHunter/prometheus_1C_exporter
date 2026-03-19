@@ -136,7 +136,7 @@ scrape_configs:
 - **Приостановка и возобновление сбора метрик** (параметры передаются в строке запроса):  
   Приостановить сбор метрик `processes,connections` на 5 минут:  
   `http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5`  
-  Возобновить сбор метрик `disk_metrics`:  
+  Возобновить сбор мет릭 `disk_metrics`:  
   `http://localhost:9091/Continue?metricNames=disk_metrics`
 
 #### Через curl (Linux, WSL, macOS)
@@ -328,18 +328,18 @@ scrape_configs:
    ```yaml
    variables:
      SERVER_URL: "http://server-web:9091"   # базовый URL экспортера (без пути)
-     FILE_TO_UPLOAD: "settings.yml"         # имя файла конфигурации
-     # SECRETS_FILE: "secrets.json.enc"     # если имя отличается
+     # FILE_TO_UPLOAD: "settings.yml"       # опционально: имя файла конфигурации, по умолчанию settings.yml
+     # SECRETS_FILE: "secrets.json.enc"     # опционально: имя файла секретов, по умолчанию secrets.json.enc
    ```
-4. **В ветке `main`** создайте файл `main-pipeline.yml` с общим кодом пайплайна (см. ниже).
-5. **В настройках CI/CD проекта** (Settings → CI/CD → General pipelines → **Custom CI configuration path**) укажите путь:  
-   `main-pipeline.yml@main`.  
-   Это заставит GitLab для всех веток, у которых нет собственного `.gitlab-ci.yml`, использовать этот файл из ветки `main`.
 
-**Пример `main-pipeline.yml` (ветка `main`):**
+4. **В каждой ветке** создайте файл `main-pipeline.yml` с общим кодом пайплайна (см. ниже). Поскольку пайплайн берётся из текущей ветки, при необходимости можно иметь разные версии, но рекомендуется синхронизировать их через merge из `main`.
+5. **В настройках CI/CD проекта** (Settings → CI/CD → General pipelines) в поле **CI/CD configuration file** (Файл конфигурации CI/CD) укажите имя файла пайплайна:  
+   `main-pipeline.yml`  
+   (без указания ветки, так как файл должен присутствовать во всех ветках).
+
+**Пример `main-pipeline.yml`:**
 
 ```yaml
-# Подключаем переменные из текущей ветки (exporter-vars.yml)
 include:
   - local: 'exporter-vars.yml'
 
@@ -347,7 +347,9 @@ stages:
   - upload
 
 default:
-  image: alpine/curl:8.17.0
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl
 
 upload_file:
   stage: upload
@@ -358,6 +360,7 @@ upload_file:
       when: always
     - when: never
   script:
+    - FILE_TO_UPLOAD=${FILE_TO_UPLOAD:-settings.yml}
     - echo "Uploading $FILE_TO_UPLOAD to $SERVER_URL"
     - curl -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/set_config" --fail
 
@@ -371,19 +374,22 @@ send_secrets:
   script:
     - SECRETS_FILE=${SECRETS_FILE:-secrets.json.enc}
     - if [ ! -f "$SECRETS_FILE" ]; then echo "Secrets file not found"; exit 1; fi
-    - if [ -z "$SERVER_URL" ]; then echo "SERVER_URL not set"; exit 1; fi
     - ENCRYPTED_BASE64=$(base64 -w0 "$SECRETS_FILE")
-    - curl -X POST "$SERVER_URL/set_secrets" -H "Content-Type: application/json" -d "{\"encrypted_data\": \"$ENCRYPTED_BASE64\"}" --fail
+    - |
+      curl -X POST "$SERVER_URL/set_secrets" \
+        -H "Content-Type: application/json" \
+        -d '{"encrypted_data": "'"$ENCRYPTED_BASE64"'"}' \
+        --fail --silent --show-error
     - echo "Secrets delivered"
 ```
 
 ### 2. Обновление конфигурационного файла
 
-При каждом изменении `settings.yml` в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/set_config`. Экспортер применяет новые настройки без перезапуска.
+При каждом изменении `settings.yml` (или файла, указанного в `FILE_TO_UPLOAD`) в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/set_config`. Экспортер применяет новые настройки без перезапуска.
 
 Для корректной работы убедитесь, что:
 * В файле `exporter-vars.yml` ветки определена переменная `SERVER_URL`.
-* Ветка `main` защищена и содержит актуальный `main-pipeline.yml`.
+* Ветка содержит актуальный `main-pipeline.yml`.
 
 ### 3. Безопасное хранение и доставка секретов
 
@@ -414,5 +420,5 @@ send_secrets:
 *   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/public-key` (см. примеры выше).
 *   В режиме GitLab экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
 *   При перезагрузке экспортер загружает последние сохранённые секреты с диска, поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
-*   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится централизованно в `main`.
+*   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится в каждой ветке и используется из неё. Для централизованного управления рекомендуется поддерживать `main-pipeline.yml` синхронизированным во всех ветках.
 ```
