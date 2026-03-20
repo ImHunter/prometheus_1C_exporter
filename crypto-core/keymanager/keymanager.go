@@ -30,7 +30,7 @@ type KeyManager struct {
 	keysPath   string
 }
 
-// NewKeyManager создаёт или загружает ключи для пары host/port.
+// NewKeyManager создает или загружает ключи для пары host/port.
 func NewKeyManager(host, port string) (*KeyManager, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")

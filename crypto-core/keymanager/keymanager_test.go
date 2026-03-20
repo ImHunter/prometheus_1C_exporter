@@ -102,7 +102,7 @@ func TestSanitize(t *testing.T) {
 		{"server-name", "server-name"},
 		{"server:1545", "server_1545"},
 		{"a.b.c", "a_b_c"},
-		{"", ""}, // теперь пустая строка остаётся пустой
+		{"", ""}, // теперь пустая строка остается пустой
 	}
 	for _, tt := range tests {
 		result := sanitize(tt.input)
@@ -164,7 +164,7 @@ func TestEncryptDecryptWithDifferentKeys(t *testing.T) {
 }
 
 func TestEncryptDecryptWithPublicKey(t *testing.T) {
-	// Создаём временный keymanager (ключи будут созданы во временной директории)
+	// Создаем временный keymanager (ключи будут созданы во временной директории)
 	// Используем уникальные host/port, чтобы не конфликтовать с другими тестами.
 	km, err := NewKeyManager("test-encrypt-pub", "1")
 	if err != nil {

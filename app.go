@@ -89,9 +89,7 @@ func (a *app) Start() error {
 	go a.settings.GetDBCredentials(a.ctx, expl.CForce)
 	go a.reloadWatcher()
 
-	a.register()
-
-	// Если включён режим gitlab, запускаем пайплайн для получения секретов
+	// Если включен режим gitlab, запускаем пайплайн для получения секретов
 	if a.gitlabSecretsAvailable() {
 		go func() {
 			// Небольшая задержка, чтобы сервер успел запуститься
@@ -133,7 +131,6 @@ func (a *app) reloadWatcher() {
 }
 
 func (a *app) renewSettings() {
-
 	a.reloadMutex.Lock()
 	defer a.reloadMutex.Unlock()
 
@@ -146,10 +143,42 @@ func (a *app) renewSettings() {
 	a.settings.AssignFrom(news)
 	logger.InitLogger(a.settings.LogDir, a.settings.LogLevel)
 
-	a.unregisterAll()
-	a.metric.FillMetrics(a.settings)
-	a.register()
+	// 1. Останавливаем старые экспортеры и удаляем их из реестров
+	for _, ex := range a.metric.Exporters {
+		ex.Stop()
+		a.osRegistry.Unregister(ex)
+		a.racRegistry.Unregister(ex)
+	}
 
+	// 2. Создаем новый Metrics и заполняем его
+	newMetrics := &expl.Metrics{}
+	newMetrics.FillMetrics(a.settings)
+
+	// 3. Регистрируем новые экспортеры
+	for _, ex := range newMetrics.Exporters {
+		if newMetrics.Contains(ex.GetName()) {
+			var targetRegistry *prometheus.Registry
+			switch ex.GetType() {
+			case model.TypeOS:
+				targetRegistry = a.osRegistry
+			case model.TypeRAC:
+				targetRegistry = a.racRegistry
+			default:
+				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
+				continue
+			}
+			if err := targetRegistry.Register(ex); err != nil {
+				logger.DefaultLogger.Errorf("Failed to register metric %s: %v", ex.GetName(), err)
+			}
+		} else {
+			ex.Stop()
+		}
+	}
+
+	// 4. Заменяем старый Metrics новым
+	a.metric = newMetrics
+
+	// Пересоздаем keyManager
 	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port())
 	if err == nil {
 		a.keyManager = km
@@ -206,40 +235,50 @@ func (a *app) initHTTP() {
 	}
 }
 
-func (a *app) unregisterAll() {
-	for _, ex := range a.metric.Exporters {
-		if !prometheus.Unregister(ex) {
-			logger.Warnf("failed to unregister metric %s", ex.GetName())
-		}
-	}
-}
+// func (a *app) unregisterAll() {
+// 	for _, ex := range a.metric.Exporters {
+// 		// Пытаемся удалить из обоих реестров (безопасно, если метрики там нет)
+// 		if !a.osRegistry.Unregister(ex) && !a.racRegistry.Unregister(ex) {
+// 			// Метрика не была зарегистрирована ни в одном из реестров – это нормально,
+// 			// если она ранее не регистрировалась или уже удалена. Логируем только в режиме отладки.
+// 			logger.DefaultLogger.Debugf("metric %s not found in any registry during unregister", ex.GetName())
+// 		}
+// 	}
+// 	a.metric.Exporters = make([]model.IExporter, 15)
+// }
 
-func (a *app) register() {
-	for _, ex := range a.metric.Exporters {
-		if a.metric.Contains(ex.GetName()) {
-			// Пытаемся зарегистрировать метрику в глобальном реестре Prometheus
-			if err := prometheus.Register(ex); err != nil {
-				// Ошибка может возникнуть, если метрика уже зарегистрирована
-				logger.Errorf("Failed to register metric %s: %v", ex.GetName(), err)
-			} else {
-				// Успешная регистрация — добавляем в специализированные реестры
-				switch ex.GetType() {
-				case model.TypeOS:
-					a.osRegistry.Register(ex)
-				case model.TypeRAC:
-					a.racRegistry.Register(ex)
-				}
-			}
-		} else {
-			ex.Stop()
-			prometheus.Unregister(ex)
-			logger.Debugf("Метрика %q пропущена", ex.GetName())
-		}
-	}
-}
+// func (a *app) register() {
+// 	for _, ex := range a.metric.Exporters {
+// 		if a.metric.Contains(ex.GetName()) {
+// 			// Определяем целевой реестр по типу метрики
+// 			var targetRegistry *prometheus.Registry
+// 			switch ex.GetType() {
+// 			case model.TypeOS:
+// 				targetRegistry = a.osRegistry
+// 			case model.TypeRAC:
+// 				targetRegistry = a.racRegistry
+// 			default:
+// 				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
+// 				continue
+// 			}
+
+// 			// Регистрируем только в целевом реестре
+// 			if err := targetRegistry.Register(ex); err != nil {
+// 				logger.DefaultLogger.Errorf("Failed to register metric %s in %s registry: %v", ex.GetName(), ex.GetType(), err)
+// 			} else {
+// 				logger.DefaultLogger.Infof("Registered metric %s in %s registry", ex.GetName(), ex.GetType())
+// 			}
+// 		} else {
+// 			ex.Stop()
+// 			// Удаляем из обоих реестров на случай, если метрика была зарегистрирована ранее
+// 			a.osRegistry.Unregister(ex)
+// 			a.racRegistry.Unregister(ex)
+// 			logger.DefaultLogger.Debugf("Метрика %q пропущена – удалена из реестров", ex.GetName())
+// 		}
+// 	}
+// }
 
 func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
-
 	logger.DefaultLogger.Info("Начинаем обработку метода /set_config")
 
 	if r.Method != "POST" {
@@ -248,30 +287,50 @@ func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Получаем файл из multipart формы
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		w.WriteHeader(400)
-		logger.DefaultLogger.Error(err)
+		logger.DefaultLogger.Error("Ошибка получения файла: ", err)
 		return
 	}
 	defer file.Close()
 
-	out, err := os.Create(a.settings.SettingsPath)
+	// Создаем временный файл для атомарной замены (опционально, для надежности)
+	tempPath := a.settings.SettingsPath + ".tmp"
+	out, err := os.Create(tempPath)
 	if err != nil {
 		w.WriteHeader(500)
-		logger.DefaultLogger.Error(err)
+		logger.DefaultLogger.Error("Ошибка создания временного файла: ", err)
 		return
 	}
 	defer out.Close()
 
-	io.Copy(out, file)
+	// Копируем содержимое полученного файла во временный файл
+	if _, err := io.Copy(out, file); err != nil {
+		w.WriteHeader(500)
+		logger.DefaultLogger.Error("Ошибка копирования файла: ", err)
+		return
+	}
+
+	// Закрываем временный файл перед переименованием
+	out.Close()
+
+	// Атомарно заменяем старый конфиг новым
+	if err := os.Rename(tempPath, a.settings.SettingsPath); err != nil {
+		w.WriteHeader(500)
+		logger.DefaultLogger.Error("Ошибка замены конфигурационного файла: ", err)
+		return
+	}
+
+	// Отправляем ответ сразу, чтобы клиент не ждал перезагрузки
 	w.WriteHeader(201)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
 
-	// Перезагружаем настройки в фоне, чтобы не блокировать ответ
-	go a.renewSettings()
+	a.renewSettings()
+	// go a.renewSettings()
 
 }
 
@@ -491,7 +550,7 @@ func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "secrets updated")
 }
 
-// publicKeyHandler отдаёт публичный ключ в формате PEM.
+// publicKeyHandler отдает публичный ключ в формате PEM.
 func (a *app) publicKeyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -375,7 +375,7 @@ func (s *Settings) GitlabSecretsEnabled() bool {
 		return false
 	}
 	if s.DBCredentials.GitLab == nil {
-		// Если режим gitlab включён, но секция отсутствует – это ошибка конфигурации
+		// Если режим gitlab включен, но секция отсутствует – это ошибка конфигурации
 		logger.Error("GitLab mode is enabled but GitLab settings are missing")
 		return false
 	}

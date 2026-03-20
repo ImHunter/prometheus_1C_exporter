@@ -16,7 +16,7 @@ import (
 const (
 	defaultLogDir      = "logs"
 	defaultLogFilename = "log.txt"
-	DefaultPageSize    = 50
+	DefaultPageSize    = 100
 )
 
 var (
