@@ -1,6 +1,7 @@
 package keymanager
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -9,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +20,7 @@ import (
 // EncryptedPackage представляет зашифрованные данные для передачи.
 type EncryptedPackage struct {
 	EncryptedKey []byte `json:"encrypted_key"` // AES-ключ, зашифрованный RSA
-	IV           []byte `json:"iv"`            // Вектор для AES-GCM
+	IV           []byte `json:"iv"`            // Вектор для AES-CBC (16 байт)
 	Data         []byte `json:"data"`          // Зашифрованные данные
 }
 
@@ -30,7 +32,7 @@ type KeyManager struct {
 	keysPath   string
 }
 
-// NewKeyManager создает или загружает ключи для пары host/port.
+// NewKeyManager создаёт или загружает ключи для пары host/port.
 func NewKeyManager(host, port string) (*KeyManager, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")
@@ -41,7 +43,6 @@ func NewKeyManager(host, port string) (*KeyManager, error) {
 	}
 	exeDir := filepath.Dir(exePath)
 
-	// Определяем имя папки: host + '_' + порт (если порт пустой, то "noport")
 	portPart := port
 	if portPart == "" {
 		portPart = "noport"
@@ -58,7 +59,6 @@ func NewKeyManager(host, port string) (*KeyManager, error) {
 
 	km := &KeyManager{keysPath: keysDir}
 
-	// Пытаемся загрузить существующие ключи
 	if privBytes, err := os.ReadFile(privPath); err == nil {
 		priv, err := x509.ParsePKCS1PrivateKey(privBytes)
 		if err == nil {
@@ -68,7 +68,6 @@ func NewKeyManager(host, port string) (*KeyManager, error) {
 		}
 	}
 
-	// Генерация новой пары ключей (3072 бита)
 	priv, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		return nil, fmt.Errorf("generate RSA key: %w", err)
@@ -112,8 +111,8 @@ func (km *KeyManager) PublicKeyPEM() (string, error) {
 	return string(pem.EncodeToMemory(pemBlock)), nil
 }
 
-// encryptWithPublicKey выполняет гибридное шифрование (RSA + AES-GCM) с заданным публичным ключом.
-// Возвращает сериализованный JSON EncryptedPackage.
+// encryptWithPublicKey выполняет гибридное шифрование (RSA + AES-256-CBC)
+// с заданным публичным ключом. Возвращает сериализованный JSON EncryptedPackage.
 func encryptWithPublicKey(pub *rsa.PublicKey, plaintext []byte) ([]byte, error) {
 	// 1. Генерируем случайный AES-256 ключ
 	aesKey := make([]byte, 32)
@@ -121,22 +120,21 @@ func encryptWithPublicKey(pub *rsa.PublicKey, plaintext []byte) ([]byte, error) 
 		return nil, fmt.Errorf("generate AES key: %w", err)
 	}
 
-	// 2. Генерируем случайный IV для AES-GCM (12 байт)
-	iv := make([]byte, 12)
+	// 2. Генерируем случайный IV для AES-CBC (16 байт)
+	iv := make([]byte, aes.BlockSize)
 	if _, err := rand.Read(iv); err != nil {
 		return nil, fmt.Errorf("generate IV: %w", err)
 	}
 
-	// 3. Шифруем данные AES-GCM
+	// 3. Шифруем данные AES-256-CBC с PKCS#7 padding
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create GCM: %w", err)
-	}
-	ciphertext := gcm.Seal(nil, iv, plaintext, nil)
+	padded := pkcs7Pad(plaintext, aes.BlockSize)
+	ciphertext := make([]byte, len(padded))
+	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(ciphertext, padded)
 
 	// 4. Шифруем AES-ключ RSA
 	encryptedKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pub, aesKey, nil)
@@ -195,24 +193,28 @@ func (km *KeyManager) Decrypt(encryptedData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unmarshal encrypted package: %w", err)
 	}
 
+	// Расшифровываем AES-ключ RSA
 	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, km.privateKey, pkg.EncryptedKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt AES key: %w", err)
 	}
 
+	// Расшифровываем данные AES-256-CBC
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("create AES cipher: %w", err)
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create GCM: %w", err)
+	if len(pkg.IV) != aes.BlockSize {
+		return nil, fmt.Errorf("IV length mismatch")
 	}
-	plaintext, err := gcm.Open(nil, pkg.IV, pkg.Data, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt data: %w", err)
-	}
+	mode := cipher.NewCBCDecrypter(block, pkg.IV)
+	decrypted := make([]byte, len(pkg.Data))
+	mode.CryptBlocks(decrypted, pkg.Data)
 
+	plaintext, err := pkcs7Unpad(decrypted, aes.BlockSize)
+	if err != nil {
+		return nil, fmt.Errorf("unpad data: %w", err)
+	}
 	return plaintext, nil
 }
 
@@ -241,7 +243,7 @@ func (km *KeyManager) SaveLastSecrets(plaintext []byte) error {
 	if km.keysPath == "" {
 		return fmt.Errorf("keys path not set")
 	}
-	encrypted, err := km.Encrypt(plaintext) // Encrypt должен быть публичным
+	encrypted, err := km.Encrypt(plaintext)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt secrets: %w", err)
 	}
@@ -261,4 +263,28 @@ func (km *KeyManager) LoadLastSecrets() ([]byte, error) {
 		return nil, err // отсутствие файла – нормальная ситуация
 	}
 	return km.Decrypt(encrypted)
+}
+
+// pkcs7Pad добавляет PKCS#7 padding.
+func pkcs7Pad(data []byte, blockSize int) []byte {
+	padding := blockSize - len(data)%blockSize
+	padtext := bytes.Repeat([]byte{byte(padding)}, padding)
+	return append(data, padtext...)
+}
+
+// pkcs7Unpad удаляет PKCS#7 padding.
+func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, errors.New("empty data")
+	}
+	padding := int(data[len(data)-1])
+	if padding > blockSize || padding == 0 {
+		return nil, errors.New("invalid padding")
+	}
+	for i := 0; i < padding; i++ {
+		if data[len(data)-1-i] != byte(padding) {
+			return nil, errors.New("invalid padding")
+		}
+	}
+	return data[:len(data)-padding], nil
 }

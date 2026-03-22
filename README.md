@@ -183,7 +183,7 @@ scrape_configs:
   curl -X POST http://localhost:9091/set_config -F "file=@settings.yml"
   ```
 
-- **Приостановка сбора метрик** (аналогично браузерному варианту)
+- **Приостановка сбора метрик**
   ```bash
   curl "http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5"
   ```
@@ -193,54 +193,186 @@ scrape_configs:
   curl "http://localhost:9091/Continue?metricNames=disk_metrics"
   ```
 
-#### Через PowerShell (Windows)
+#### Через cmd (Windows)
+
+Для Windows рекомендуется использовать команду `curl` (встроена в Windows 10/11) и встроенные утилиты `certutil`, `findstr` для работы с base64.
 
 - **Получение публичного ключа**
-  ```powershell
-  Invoke-WebRequest -Uri http://localhost:9091/public-key -OutFile exporter.pub
-  ```
-
-- **Шифрование секретов с помощью эндпоинта `/encrypt-secrets`**
-  ```powershell
-  $body = Get-Content -Raw secrets.json
-  Invoke-RestMethod -Uri http://localhost:9091/encrypt-secrets `
-      -Method Post `
-      -Body $body `
-      -ContentType "application/json" `
-      -OutFile secrets.json.enc
+  ```cmd
+  curl -o exporter.pub http://localhost:9091/public-key
   ```
 
 - **Кодирование зашифрованного файла в base64** (для ручной отправки)
-  ```powershell
-  [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets.json.enc"))
+  ```cmd
+  certutil -encode secrets.json.enc secrets.tmp >nul && findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" secrets.tmp > secrets.b64 && del secrets.tmp
   ```
+  После выполнения содержимое файла `secrets.b64` (без переноса строк) можно использовать как значение поля `encrypted_data`.
 
 - **Отправка зашифрованных секретов**
-  ```powershell
-  $encrypted = [Convert]::ToBase64String([IO.File]::ReadAllBytes("secrets.json.enc"))
-  $body = @{ encrypted_data = $encrypted } | ConvertTo-Json
-  Invoke-RestMethod -Uri http://localhost:9091/set_secrets -Method Post -Body $body -ContentType "application/json"
+  ```cmd
+  set /p ENC=<secrets.b64
+  curl -X POST http://localhost:9091/set_secrets -H "Content-Type: application/json" -d "{\"encrypted_data\": \"%ENC%\"}"
   ```
 
-- **Установка нового пути к бинарнику**
-  ```powershell
-  Invoke-RestMethod -Uri http://localhost:9091/set_binarypath -Method Post -Body "https://gitlab.example.com/path/to/new/exporter.exe" -ContentType "text/plain"
+- **Установка нового пути к бинарнику** (для обновления через WinSW)
+  ```cmd
+  curl -X POST http://localhost:9091/set_binarypath -H "Content-Type: text/plain" --data "https://gitlab.example.com/path/to/new/exporter.exe"
   ```
 
 - **Эмуляция аварийного завершения**
-  ```powershell
-  Invoke-RestMethod -Uri "http://localhost:9091/shutdown_emulate?exit_code=0" -Method Post
+  ```cmd
+  curl -X POST "http://localhost:9091/shutdown_emulate?exit_code=0"
   ```
 
 - **Чтение логов** (последние 50 строк)
-  ```powershell
-  Invoke-RestMethod -Uri "http://localhost:9091/log?mode=last&n=50"
+  ```cmd
+  curl "http://localhost:9091/log?mode=last&n=50"
   ```
 
-- **Загрузка нового конфигурационного файла**
-  ```powershell
-  Invoke-RestMethod -Uri http://localhost:9091/set_config -Method Post -Form @{ file = Get-Item "settings.yml" }
+- **Загрузка нового конфигурационного файла** (с применением новых настроек)
+  ```cmd
+  curl -X POST http://localhost:9091/set_config -F "file=@settings.yml"
   ```
+
+- **Приостановка сбора метрик**
+  ```cmd
+  curl "http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5"
+  ```
+
+- **Возобновление сбора метрик**
+  ```cmd
+  curl "http://localhost:9091/Continue?metricNames=disk_metrics"
+  ```
+
+#### Шифрование секретов с помощью готовых скриптов (рекомендуемый способ)
+
+Для шифрования секретов без передачи открытых данных по сети подготовлены два скрипта: `encode.bat` (Windows) и `encrypt.sh` (Linux). Они используют публичный ключ экспортера и создают JSON-файл, совместимый с эндпоинтом `/set_secrets`. Скрипты требуют наличия `openssl` и базовых утилит.
+
+**Скрипт `encode.bat` (Windows)** – сохраните как `encode.bat` в папку с `exporter.pub` и `secrets.json`:
+
+```batch
+@echo off
+setlocal
+
+set INPUT=secrets.json
+set OUTPUT=secrets.json.enc
+if not "%~1"=="" set INPUT=%~1
+if not "%~2"=="" set OUTPUT=%~2
+
+where openssl >nul 2>&1 || (echo ERROR: openssl not found & exit /b 1)
+if not exist exporter.pub (echo ERROR: exporter.pub not found & exit /b 1)
+if not exist "%INPUT%" (echo ERROR: input file "%INPUT%" not found & exit /b 1)
+
+echo Generating AES key and IV...
+openssl rand -hex 32 > aes_key.hex
+openssl rand -hex 16 > iv.hex
+if errorlevel 1 exit /b 1
+
+set /p AES_KEY=<aes_key.hex
+set /p IV=<iv.hex
+
+echo Encrypting data with AES-256-CBC...
+openssl enc -aes-256-cbc -K %AES_KEY% -iv %IV% -in "%INPUT%" -out encrypted_data.bin
+if errorlevel 1 exit /b 1
+
+echo Encrypting AES key with RSA...
+openssl rsautl -encrypt -pubin -inkey exporter.pub -in aes_key.hex -out encrypted_key.bin
+if errorlevel 1 exit /b 1
+
+echo Encoding components to base64...
+certutil -encode encrypted_key.bin enc_key.tmp >nul
+findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" enc_key.tmp > encrypted_key.b64
+del enc_key.tmp
+
+certutil -encode iv.hex iv.tmp >nul
+findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" iv.tmp > iv.b64
+del iv.tmp
+
+certutil -encode encrypted_data.bin data.tmp >nul
+findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" data.tmp > encrypted_data.b64
+del data.tmp
+
+del aes_key.hex iv.hex encrypted_key.bin encrypted_data.bin
+
+set /p ENCRYPTED_KEY=<encrypted_key.b64
+set /p IV_B64=<iv.b64
+set /p DATA_B64=<encrypted_data.b64
+
+del encrypted_key.b64 iv.b64 encrypted_data.b64
+
+(
+echo {
+echo   "encrypted_key": "%ENCRYPTED_KEY%",
+echo   "iv": "%IV_B64%",
+echo   "data": "%DATA_B64%"
+}
+) > "%OUTPUT%"
+
+echo Done. Encrypted file: %OUTPUT%
+```
+
+**Скрипт `encrypt.sh` (Linux)** – сохраните как `encrypt.sh`, сделайте исполняемым (`chmod +x encrypt.sh`):
+
+```bash
+#!/bin/bash
+set -e
+
+INPUT="${1:-secrets.json}"
+OUTPUT="${2:-secrets.json.enc}"
+
+command -v openssl >/dev/null 2>&1 || { echo "ERROR: openssl not found"; exit 1; }
+command -v base64 >/dev/null 2>&1 || { echo "ERROR: base64 not found"; exit 1; }
+command -v xxd >/dev/null 2>&1 || { echo "ERROR: xxd not found. Install it (e.g., apt install xxd)."; exit 1; }
+
+if [ ! -f exporter.pub ]; then
+    echo "ERROR: exporter.pub not found"
+    exit 1
+fi
+
+if [ ! -f "$INPUT" ]; then
+    echo "ERROR: input file '$INPUT' not found"
+    exit 1
+fi
+
+echo "Generating AES key and IV..."
+openssl rand -out aes_key.bin 32
+openssl rand -out iv.bin 16
+
+AES_KEY_HEX=$(xxd -p -c 256 aes_key.bin)
+IV_HEX=$(xxd -p -c 256 iv.bin)
+
+echo "Encrypting data with AES-256-CBC..."
+openssl enc -aes-256-cbc -K "$AES_KEY_HEX" -iv "$IV_HEX" -in "$INPUT" -out encrypted_data.bin
+
+echo "Encrypting AES key with RSA..."
+openssl pkeyutl -encrypt -pubin -inkey exporter.pub -in aes_key.bin -out encrypted_key.bin
+
+echo "Encoding components to base64..."
+ENCRYPTED_KEY_B64=$(base64 -w0 encrypted_key.bin)
+IV_B64=$(base64 -w0 iv.bin)
+DATA_B64=$(base64 -w0 encrypted_data.bin)
+
+cat > "$OUTPUT" <<EOF
+{
+  "encrypted_key": "$ENCRYPTED_KEY_B64",
+  "iv": "$IV_B64",
+  "data": "$DATA_B64"
+}
+EOF
+
+rm -f aes_key.bin iv.bin encrypted_key.bin encrypted_data.bin
+
+echo "Done. Encrypted file: $OUTPUT"
+```
+
+**Использование скриптов:**
+1. Получите публичный ключ экспортера:  
+   `curl -o exporter.pub http://<exporter-address>:<port>/public-key`
+2. Подготовьте файл `secrets.json` с открытыми секретами (UTF-8).
+3. Запустите скрипт:
+   - Windows: `encode.bat secrets.json` (или `encode.bat my.json my.enc`)
+   - Linux: `./encrypt.sh secrets.json` (или `./encrypt.sh my.json my.enc`)
+4. Полученный файл `secrets.json.enc` (JSON) закоммитьте в соответствующую ветку GitLab.
 
 ## 📊 Метрики
 
@@ -396,10 +528,7 @@ send_secrets:
 Для работы с учетными данными баз 1С (логины/пароли) используется следующий механизм:
 
 * **Генерация ключей** – при первом запуске экспортер создает пару RSA-ключей (3072 бит) и сохраняет их в подкаталоге `keys/<host>_<port>/` рядом с исполняемым файлом. Приватный ключ защищен правами доступа (0600).
-* **Шифрование секретов** – администратор может зашифровать секреты двумя способами:
-  * Локально с помощью утилиты `openssl` и публичного ключа (полученного через `/public-key`).
-  * С помощью эндпоинта `/encrypt-secrets` (см. примеры выше).
-  Формат секретов:
+* **Шифрование секретов** – администратор может зашифровать секреты с помощью готовых скриптов `encode.bat` (Windows) или `encrypt.sh` (Linux), которые используют публичный ключ экспортера и создают JSON-файл, совместимый с `/set_secrets`. Формат секретов:
   ```json
   {
     "ras": { "login": "admin", "password": "ras_pass" },
@@ -421,4 +550,3 @@ send_secrets:
 *   В режиме GitLab экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
 *   При перезагрузке экспортер загружает последние сохраненные секреты с диска, поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
 *   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится в каждой ветке и используется из нее. Для централизованного управления рекомендуется поддерживать `main-pipeline.yml` синхронизированным во всех ветках.
-```

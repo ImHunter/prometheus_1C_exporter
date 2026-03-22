@@ -89,6 +89,8 @@ func (a *app) Start() error {
 	go a.settings.GetDBCredentials(a.ctx, expl.CForce)
 	go a.reloadWatcher()
 
+	a.register()
+
 	// Если включен режим gitlab, запускаем пайплайн для получения секретов
 	if a.gitlabSecretsAvailable() {
 		go func() {
@@ -247,36 +249,36 @@ func (a *app) initHTTP() {
 // 	a.metric.Exporters = make([]model.IExporter, 15)
 // }
 
-// func (a *app) register() {
-// 	for _, ex := range a.metric.Exporters {
-// 		if a.metric.Contains(ex.GetName()) {
-// 			// Определяем целевой реестр по типу метрики
-// 			var targetRegistry *prometheus.Registry
-// 			switch ex.GetType() {
-// 			case model.TypeOS:
-// 				targetRegistry = a.osRegistry
-// 			case model.TypeRAC:
-// 				targetRegistry = a.racRegistry
-// 			default:
-// 				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
-// 				continue
-// 			}
+func (a *app) register() {
+	for _, ex := range a.metric.Exporters {
+		if a.metric.Contains(ex.GetName()) {
+			// Определяем целевой реестр по типу метрики
+			var targetRegistry *prometheus.Registry
+			switch ex.GetType() {
+			case model.TypeOS:
+				targetRegistry = a.osRegistry
+			case model.TypeRAC:
+				targetRegistry = a.racRegistry
+			default:
+				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
+				continue
+			}
 
-// 			// Регистрируем только в целевом реестре
-// 			if err := targetRegistry.Register(ex); err != nil {
-// 				logger.DefaultLogger.Errorf("Failed to register metric %s in %s registry: %v", ex.GetName(), ex.GetType(), err)
-// 			} else {
-// 				logger.DefaultLogger.Infof("Registered metric %s in %s registry", ex.GetName(), ex.GetType())
-// 			}
-// 		} else {
-// 			ex.Stop()
-// 			// Удаляем из обоих реестров на случай, если метрика была зарегистрирована ранее
-// 			a.osRegistry.Unregister(ex)
-// 			a.racRegistry.Unregister(ex)
-// 			logger.DefaultLogger.Debugf("Метрика %q пропущена – удалена из реестров", ex.GetName())
-// 		}
-// 	}
-// }
+			// Регистрируем только в целевом реестре
+			if err := targetRegistry.Register(ex); err != nil {
+				logger.DefaultLogger.Errorf("Failed to register metric %s in %s registry: %v", ex.GetName(), ex.GetType(), err)
+			} else {
+				logger.DefaultLogger.Infof("Registered metric %s in %s registry", ex.GetName(), ex.GetType())
+			}
+		} else {
+			ex.Stop()
+			// Удаляем из обоих реестров на случай, если метрика была зарегистрирована ранее
+			a.osRegistry.Unregister(ex)
+			a.racRegistry.Unregister(ex)
+			logger.DefaultLogger.Debugf("Метрика %q пропущена – удалена из реестров", ex.GetName())
+		}
+	}
+}
 
 func (a *app) setConfig(w http.ResponseWriter, r *http.Request) {
 	logger.DefaultLogger.Info("Начинаем обработку метода /set_config")
