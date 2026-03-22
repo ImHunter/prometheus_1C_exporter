@@ -99,13 +99,15 @@ scrape_configs:
 | GET | `/Pause` | `metricNames`<br>`offsetMin` (опционально) | Приостанавливает сбор указанных метрик на заданное время (в минутах) |
 | GET | `/Continue` | `metricNames` | Возобновляет сбор указанных метрик |
 | GET | `/log` | `mode`, `n`, `from` | Читает содержимое лога: <br>`mode=first` – первые `n` строк,<br>`mode=last` – последние `n` строк,<br>`mode=range` – строки с `from` по `from+n-1` |
-| GET | `/public-key` | – | Возвращает публичный ключ RSA в формате PEM для шифрования секретов |
+| GET | `/config/get` | – | Возвращает текущий конфигурационный файл `settings.yml` |
+| POST | `/config/set` | `file` (multipart/form-data) | Загружает новый конфигурационный файл (`settings.yml`) и применяет его без перезапуска |
+| GET | `/secrets` | – | Информация о загруженных секретах (наличие, список баз, время обновления) |
+| GET | `/secrets/pub_key` | – | Возвращает публичный ключ RSA в формате PEM |
 | GET | `/debug/pprof/*` | – | Стандартные эндпоинты для профилирования Go |
-| POST | `/set_config` | `file` (multipart/form-data) | Загружает новый конфигурационный файл (`settings.yml`) и применяет его без перезапуска |
 | POST | `/set_binarypath` | тело запроса содержит URL | Устанавливает новый путь к бинарному файлу в конфигурации WinSW (используется для обновления) |
 | POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода (для триггера перезапуска WinSW) |
-| POST | `/set_secrets` | JSON `{"encrypted_data": "base64..."}` | Принимает зашифрованные секреты, расшифровывает их и сохраняет в памяти |
-| POST | `/encrypt-secrets` | JSON с открытыми секретами | Принимает открытые секреты, шифрует их публичным ключом и возвращает зашифрованный файл (бинарные данные) |
+| POST | `/secrets/set` | бинарные данные | Принимает зашифрованные секреты (JSON-пакет), расшифровывает и сохраняет их |
+| POST | `/secrets/encrypt` | JSON с открытыми секретами | Шифрует открытые секреты публичным ключом и возвращает JSON-пакет для отправки на `/secrets/set` |
 
 ### Примеры использования
 
@@ -121,8 +123,15 @@ scrape_configs:
   В браузере отобразится текстовый вывод в формате Prometheus.
 
 - **Публичный ключ** – для получения PEM-ключа:  
-  `http://localhost:9091/public-key`  
+  `http://localhost:9091/secrets/pub_key`  
   Браузер покажет содержимое ключа (текст).
+
+- **Конфигурация** – получить текущий файл `settings.yml`:  
+  `http://localhost:9091/config/get`
+
+- **Информация о секретах** – для проверки загруженных секретов:  
+  `http://localhost:9091/secrets`  
+  Вернется JSON с полями `has_secrets`, `has_default`, `has_ras`, `bases`, `last_updated`.
 
 - **Чтение логов** – пример для просмотра последних 50 строк лога:  
   `http://localhost:9091/log?mode=last&n=50`  
@@ -143,29 +152,32 @@ scrape_configs:
 
 - **Получение публичного ключа**
   ```bash
-  curl http://localhost:9091/public-key > exporter.pub
+  curl http://localhost:9091/secrets/pub_key > exporter.pub
   ```
 
-- **Шифрование секретов с помощью эндпоинта `/encrypt-secrets`**
+- **Шифрование секретов с помощью эндпоинта `/secrets/encrypt`**
   ```bash
-  curl -X POST http://localhost:9091/encrypt-secrets \
-      -H "Content-Type: application/json" \
-      -d @secrets.json \
-      --output secrets.json.enc
+  curl -X POST http://localhost:9091/secrets/encrypt -H "Content-Type: application/json" -d @secrets.json --output secrets.json.enc
   ```
 
 - **Отправка зашифрованных секретов**
   ```bash
-  curl -X POST http://localhost:9091/set_secrets \
-      -H "Content-Type: application/json" \
-      -d '{"encrypted_data": "'$(base64 -w0 secrets.json.enc)'"}'
+  curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
+  ```
+
+- **Загрузка нового конфигурационного файла**
+  ```bash
+  curl -X POST http://localhost:9091/config/set -F "file=@settings.yml"
+  ```
+
+- **Получение текущего конфигурационного файла**
+  ```bash
+  curl http://localhost:9091/config/get --output settings.yml
   ```
 
 - **Установка нового пути к бинарнику** (для обновления через WinSW)
   ```bash
-  curl -X POST http://localhost:9091/set_binarypath \
-      -H "Content-Type: text/plain" \
-      --data "https://gitlab.example.com/path/to/new/exporter.exe"
+  curl -X POST http://localhost:9091/set_binarypath -H "Content-Type: text/plain" --data "https://gitlab.example.com/path/to/new/exporter.exe"
   ```
 
 - **Эмуляция аварийного завершения**
@@ -176,11 +188,6 @@ scrape_configs:
 - **Чтение логов** (последние 50 строк)
   ```bash
   curl "http://localhost:9091/log?mode=last&n=50"
-  ```
-
-- **Загрузка нового конфигурационного файла** (с применением новых настроек)
-  ```bash
-  curl -X POST http://localhost:9091/set_config -F "file=@settings.yml"
   ```
 
 - **Приостановка сбора метрик**
@@ -195,11 +202,9 @@ scrape_configs:
 
 #### Через cmd (Windows)
 
-Для Windows рекомендуется использовать команду `curl` (встроена в Windows 10/11) и встроенные утилиты `certutil`, `findstr` для работы с base64.
-
 - **Получение публичного ключа**
   ```cmd
-  curl -o exporter.pub http://localhost:9091/public-key
+  curl -o exporter.pub http://localhost:9091/secrets/pub_key
   ```
 
 - **Кодирование зашифрованного файла в base64** (для ручной отправки)
@@ -210,8 +215,17 @@ scrape_configs:
 
 - **Отправка зашифрованных секретов**
   ```cmd
-  set /p ENC=<secrets.b64
-  curl -X POST http://localhost:9091/set_secrets -H "Content-Type: application/json" -d "{\"encrypted_data\": \"%ENC%\"}"
+  curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
+  ```
+
+- **Загрузка нового конфигурационного файла**
+  ```cmd
+  curl -X POST http://localhost:9091/config/set -F "file=@settings.yml"
+  ```
+
+- **Получение текущего конфигурационного файла**
+  ```cmd
+  curl http://localhost:9091/config/get --output settings.yml
   ```
 
 - **Установка нового пути к бинарнику** (для обновления через WinSW)
@@ -229,11 +243,6 @@ scrape_configs:
   curl "http://localhost:9091/log?mode=last&n=50"
   ```
 
-- **Загрузка нового конфигурационного файла** (с применением новых настроек)
-  ```cmd
-  curl -X POST http://localhost:9091/set_config -F "file=@settings.yml"
-  ```
-
 - **Приостановка сбора метрик**
   ```cmd
   curl "http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5"
@@ -244,74 +253,11 @@ scrape_configs:
   curl "http://localhost:9091/Continue?metricNames=disk_metrics"
   ```
 
-#### Шифрование секретов с помощью готовых скриптов (рекомендуемый способ)
+#### Шифрование секретов с помощью bash-скрипта (локально, без передачи открытых данных)
 
-Для шифрования секретов без передачи открытых данных по сети подготовлены два скрипта: `encode.bat` (Windows) и `encrypt.sh` (Linux). Они используют публичный ключ экспортера и создают JSON-файл, совместимый с эндпоинтом `/set_secrets`. Скрипты требуют наличия `openssl` и базовых утилит.
+Для шифрования секретов без передачи открытых данных по сети можно использовать bash-скрипт. Он требует наличия Git Bash (входит в состав Git for Windows) или Linux-окружения.
 
-**Скрипт `encode.bat` (Windows)** – сохраните как `encode.bat` в папку с `exporter.pub` и `secrets.json`:
-
-```batch
-@echo off
-setlocal
-
-set INPUT=secrets.json
-set OUTPUT=secrets.json.enc
-if not "%~1"=="" set INPUT=%~1
-if not "%~2"=="" set OUTPUT=%~2
-
-where openssl >nul 2>&1 || (echo ERROR: openssl not found & exit /b 1)
-if not exist exporter.pub (echo ERROR: exporter.pub not found & exit /b 1)
-if not exist "%INPUT%" (echo ERROR: input file "%INPUT%" not found & exit /b 1)
-
-echo Generating AES key and IV...
-openssl rand -hex 32 > aes_key.hex
-openssl rand -hex 16 > iv.hex
-if errorlevel 1 exit /b 1
-
-set /p AES_KEY=<aes_key.hex
-set /p IV=<iv.hex
-
-echo Encrypting data with AES-256-CBC...
-openssl enc -aes-256-cbc -K %AES_KEY% -iv %IV% -in "%INPUT%" -out encrypted_data.bin
-if errorlevel 1 exit /b 1
-
-echo Encrypting AES key with RSA...
-openssl rsautl -encrypt -pubin -inkey exporter.pub -in aes_key.hex -out encrypted_key.bin
-if errorlevel 1 exit /b 1
-
-echo Encoding components to base64...
-certutil -encode encrypted_key.bin enc_key.tmp >nul
-findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" enc_key.tmp > encrypted_key.b64
-del enc_key.tmp
-
-certutil -encode iv.hex iv.tmp >nul
-findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" iv.tmp > iv.b64
-del iv.tmp
-
-certutil -encode encrypted_data.bin data.tmp >nul
-findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" data.tmp > encrypted_data.b64
-del data.tmp
-
-del aes_key.hex iv.hex encrypted_key.bin encrypted_data.bin
-
-set /p ENCRYPTED_KEY=<encrypted_key.b64
-set /p IV_B64=<iv.b64
-set /p DATA_B64=<encrypted_data.b64
-
-del encrypted_key.b64 iv.b64 encrypted_data.b64
-
-(
-echo {
-echo   "encrypted_key": "%ENCRYPTED_KEY%",
-echo   "iv": "%IV_B64%",
-echo   "data": "%DATA_B64%"
-}
-) > "%OUTPUT%"
-
-echo Done. Encrypted file: %OUTPUT%
-```
-
-**Скрипт `encrypt.sh` (Linux)** – сохраните как `encrypt.sh`, сделайте исполняемым (`chmod +x encrypt.sh`):
+**Скрипт `encrypt.sh`** (сохраните в папку с `exporter.pub` и `secrets.json`):
 
 ```bash
 #!/bin/bash
@@ -345,7 +291,7 @@ echo "Encrypting data with AES-256-CBC..."
 openssl enc -aes-256-cbc -K "$AES_KEY_HEX" -iv "$IV_HEX" -in "$INPUT" -out encrypted_data.bin
 
 echo "Encrypting AES key with RSA..."
-openssl pkeyutl -encrypt -pubin -inkey exporter.pub -in aes_key.bin -out encrypted_key.bin
+openssl pkeyutl -encrypt -pubin -inkey exporter.pub -in aes_key.bin -out encrypted_key.bin -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
 
 echo "Encoding components to base64..."
 ENCRYPTED_KEY_B64=$(base64 -w0 encrypted_key.bin)
@@ -365,14 +311,19 @@ rm -f aes_key.bin iv.bin encrypted_key.bin encrypted_data.bin
 echo "Done. Encrypted file: $OUTPUT"
 ```
 
-**Использование скриптов:**
-1. Получите публичный ключ экспортера:  
-   `curl -o exporter.pub http://<exporter-address>:<port>/public-key`
-2. Подготовьте файл `secrets.json` с открытыми секретами (UTF-8).
-3. Запустите скрипт:
-   - Windows: `encode.bat secrets.json` (или `encode.bat my.json my.enc`)
-   - Linux: `./encrypt.sh secrets.json` (или `./encrypt.sh my.json my.enc`)
-4. Полученный файл `secrets.json.enc` (JSON) закоммитьте в соответствующую ветку GitLab.
+**Запуск в Windows (Git Bash):**
+
+1. Установите Git for Windows (https://git-scm.com/download/win) с опцией "Use Git from the Windows Command Prompt" (добавляет утилиты в PATH).
+2. Откройте Git Bash.
+3. Перейдите в папку с файлами: `cd /c/путь_к_папке`
+4. Сделайте скрипт исполняемым: `chmod +x encrypt.sh`
+5. Запустите: `./encrypt.sh secrets.json`
+6. Полученный файл `secrets.json.enc` отправьте на экспортер командой:
+   ```bash
+   curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
+   ```
+
+**Запуск в Linux** – аналогично, без дополнительных действий (скрипт уже исполняемый, `xxd` обычно установлен).
 
 ## 📊 Метрики
 
@@ -494,7 +445,7 @@ upload_file:
   script:
     - FILE_TO_UPLOAD=${FILE_TO_UPLOAD:-settings.yml}
     - echo "Uploading $FILE_TO_UPLOAD to $SERVER_URL"
-    - curl -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/set_config" --fail
+    - curl -X POST "$SERVER_URL/config/set" -F "file=@$FILE_TO_UPLOAD" --fail
 
 send_secrets:
   stage: upload
@@ -506,18 +457,13 @@ send_secrets:
   script:
     - SECRETS_FILE=${SECRETS_FILE:-secrets.json.enc}
     - if [ ! -f "$SECRETS_FILE" ]; then echo "Secrets file not found"; exit 1; fi
-    - ENCRYPTED_BASE64=$(base64 -w0 "$SECRETS_FILE")
-    - |
-      curl -X POST "$SERVER_URL/set_secrets" \
-        -H "Content-Type: application/json" \
-        -d '{"encrypted_data": "'"$ENCRYPTED_BASE64"'"}' \
-        --fail --silent --show-error
+    - curl -X POST "$SERVER_URL/secrets/set" --data-binary "@$SECRETS_FILE" --fail
     - echo "Secrets delivered"
 ```
 
 ### 2. Обновление конфигурационного файла
 
-При каждом изменении `settings.yml` (или файла, указанного в `FILE_TO_UPLOAD`) в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/set_config`. Экспортер применяет новые настройки без перезапуска.
+При каждом изменении `settings.yml` (или файла, указанного в `FILE_TO_UPLOAD`) в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/config/set`. Экспортер применяет новые настройки без перезапуска.
 
 Для корректной работы убедитесь, что:
 * В файле `exporter-vars.yml` ветки определена переменная `SERVER_URL`.
@@ -528,7 +474,7 @@ send_secrets:
 Для работы с учетными данными баз 1С (логины/пароли) используется следующий механизм:
 
 * **Генерация ключей** – при первом запуске экспортер создает пару RSA-ключей (3072 бит) и сохраняет их в подкаталоге `keys/<host>_<port>/` рядом с исполняемым файлом. Приватный ключ защищен правами доступа (0600).
-* **Шифрование секретов** – администратор может зашифровать секреты с помощью готовых скриптов `encode.bat` (Windows) или `encrypt.sh` (Linux), которые используют публичный ключ экспортера и создают JSON-файл, совместимый с `/set_secrets`. Формат секретов:
+* **Шифрование секретов** – администратор может зашифровать секреты с помощью эндпоинта `/secrets/encrypt` или bash-скрипта `encrypt.sh` (см. примеры выше). Формат секретов:
   ```json
   {
     "ras": { "login": "admin", "password": "ras_pass" },
@@ -539,14 +485,14 @@ send_secrets:
   }
   ```
 * **Размещение в GitLab** – зашифрованный файл (например, `secrets.json.enc`) помещается в соответствующую ветку репозитория.
-* **Автоматическая доставка** – при изменении файла секретов или по триггеру от экспортера запускается job `send_secrets`, который отправляет зашифрованные данные на эндпоинт `/set_secrets`. Экспортер расшифровывает их и сохраняет в памяти, а также дублирует на диск (в ту же папку, где лежат ключи) для использования при холодном старте.
+* **Автоматическая доставка** – при изменении файла секретов или по триггеру от экспортера запускается job `send_secrets`, который отправляет зашифрованные данные на эндпоинт `/secrets/set`. Экспортер расшифровывает их и сохраняет в памяти, а также дублирует на диск (в ту же папку, где лежат ключи) для использования при холодном старте.
 * **Использование секретов** – методы `GetLogPass` и `RAC_Login/Pass` автоматически подставляют полученные учетные данные; если секреты не заданы, используется старый механизм (plain).
 
 **Важно:** При первом запуске после настройки GitLab-режима экспортер не имеет секретов. Администратор должен вручную (или через CI) инициировать первый запуск пайплайна, либо дождаться автоматического триггера после коммита файла секретов.
 
 ## 📌 Примечания
 
-*   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/public-key` (см. примеры выше).
+*   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/secrets/pub_key` (см. примеры выше).
 *   В режиме GitLab экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
 *   При перезагрузке экспортер загружает последние сохраненные секреты с диска, поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
 *   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится в каждой ветке и используется из нее. Для централизованного управления рекомендуется поддерживать `main-pipeline.yml` синхронизированным во всех ветках.

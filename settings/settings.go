@@ -33,9 +33,9 @@ const (
 type TypeCredentialsSource string
 
 const (
-	CredentialsSourceUndefined TypeCredentialsSource = ""       // не задан (по умолчанию будет plain)
-	CredentialsSourcePlain     TypeCredentialsSource = "plain"  // внешний сервис
-	CredentialsSourceGitLab    TypeCredentialsSource = "gitlab" // через GitLab
+	CredentialsSourceUndefined TypeCredentialsSource = ""         // не задан (по умолчанию external)
+	CredentialsSourceExternal  TypeCredentialsSource = "external" // секреты из внешнего HTTP-сервиса (бывший plain)
+	CredentialsSourceInternal  TypeCredentialsSource = "internal" // секреты через GitLab или прямую установку (бывший gitlab)
 )
 
 type TypeHostLabelFrom string
@@ -58,8 +58,9 @@ type Settings struct {
 		GitLab        *GitLabSettings       `yaml:"GitLab,omitempty"` // параметры GitLab (если Source == "gitlab")
 	} `yaml:"DBCredentials"`
 
-	secrets   *IBCredentials
-	secretsMu sync.RWMutex
+	secrets            *IBCredentials
+	secretsMu          sync.RWMutex
+	secretsLastUpdated time.Time
 
 	RAC *struct {
 		Path  string `yaml:"Path"`
@@ -252,6 +253,9 @@ func (s *Settings) GetDisableGoCollector() bool {
 }
 
 func (s *Settings) GetDBCredentials(ctx context.Context, cForce chan struct{}) {
+	if !s.IsExternalSecrets() {
+		return
+	}
 	if s.DBCredentials == nil || s.DBCredentials.URL == "" {
 		return
 	}
@@ -365,21 +369,56 @@ func (s *Settings) UpdateSecrets(sec *IBCredentials) {
 	s.secretsMu.Lock()
 	defer s.secretsMu.Unlock()
 	s.secrets = sec
+	s.secretsLastUpdated = time.Now()
 }
 
-func (s *Settings) GitlabSecretsEnabled() bool {
+// GetSecretsInfo возвращает информацию о текущих секретах без раскрытия паролей.
+func (s *Settings) GetSecretsInfo() (hasSecrets, hasDefault, hasRas bool, bases []string, lastUpdated time.Time) {
+	s.secretsMu.RLock()
+	defer s.secretsMu.RUnlock()
+
+	if s.secrets == nil {
+		return false, false, false, nil, s.secretsLastUpdated
+	}
+
+	hasSecrets = true
+	hasDefault = s.secrets.IbaseDefault != nil
+	hasRas = s.secrets.RAS != nil
+
+	if len(s.secrets.Ibases) > 0 {
+		bases = make([]string, 0, len(s.secrets.Ibases))
+		for name := range s.secrets.Ibases {
+			bases = append(bases, name)
+		}
+	}
+	return hasSecrets, hasDefault, hasRas, bases, s.secretsLastUpdated
+}
+
+// GitlabConfigured проверяет, заполнены ли настройки GitLab (независимо от режима)
+func (s *Settings) GitlabConfigured() bool {
+	if s.DBCredentials == nil || s.DBCredentials.GitLab == nil {
+		return false
+	}
+	gl := s.DBCredentials.GitLab
+	return gl.RepoURL != "" && gl.Branch != "" && gl.TriggerToken != ""
+}
+
+// IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов
+func (s *Settings) IsInternalSecrets() bool {
 	if s.DBCredentials == nil {
 		return false
 	}
-	if s.DBCredentials.Source != CredentialsSourceGitLab {
-		return false
+	return s.DBCredentials.Source == CredentialsSourceInternal
+}
+
+// IsExternalSecrets возвращает true, если включен режим внешнего получения секретов
+func (s *Settings) IsExternalSecrets() bool {
+	if s.DBCredentials == nil {
+		// если DBCredentials нет, считаем что external (по умолчанию)
+		return true
 	}
-	if s.DBCredentials.GitLab == nil {
-		// Если режим gitlab включен, но секция отсутствует – это ошибка конфигурации
-		logger.Error("GitLab mode is enabled but GitLab settings are missing")
-		return false
-	}
-	return true
+	// Если Source не указан или равен external, то external
+	return s.DBCredentials.Source == CredentialsSourceExternal || s.DBCredentials.Source == CredentialsSourceUndefined
 }
 
 // Возвращает логин, пароль и флаг успеха.

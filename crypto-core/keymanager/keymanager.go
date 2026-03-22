@@ -32,7 +32,7 @@ type KeyManager struct {
 	keysPath   string
 }
 
-// NewKeyManager создаёт или загружает ключи для пары host/port.
+// NewKeyManager создает или загружает ключи для пары host/port.
 func NewKeyManager(host, port string) (*KeyManager, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")
@@ -193,12 +193,10 @@ func (km *KeyManager) Decrypt(encryptedData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unmarshal encrypted package: %w", err)
 	}
 
-	// Расшифровываем AES-ключ RSA
 	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, km.privateKey, pkg.EncryptedKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt AES key: %w", err)
 	}
-
 	// Расшифровываем данные AES-256-CBC
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
