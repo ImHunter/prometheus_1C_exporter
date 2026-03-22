@@ -52,7 +52,7 @@ func (a *app) Init(_ svc.Environment) (err error) {
 		return err
 	}
 
-	km, err := keymanager.NewKeyManager(a.settings.RAC.Host, a.settings.RAC.Port)
+	km, err := keymanager.NewKeyManager(a.settings.RAC.Host, a.settings.RAC.Port, logger.DefaultLogger)
 	a.keyManager = km
 	if err != nil {
 		logger.Errorf("Failed to init keymanager: %v", err)
@@ -136,7 +136,7 @@ func (a *app) renewSettings() {
 	logger.InitLogger(a.settings.LogDir, a.settings.LogLevel)
 
 	// Пересоздаем keyManager (после обновления настроек)
-	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port())
+	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port(), logger.DefaultLogger)
 	if err == nil {
 		a.keyManager = km
 		logger.DefaultLogger.Info("KeyManager reinitialized")

@@ -30,10 +30,18 @@ type KeyManager struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	keysPath   string
+	log        Logger
+}
+
+// Logger определяет минимальный интерфейс для логирования, используемый в keymanager.
+type Logger interface {
+	Errorf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
 }
 
 // NewKeyManager создает или загружает ключи для пары host/port.
-func NewKeyManager(host, port string) (*KeyManager, error) {
+func NewKeyManager(host, port string, log Logger) (*KeyManager, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host required")
 	}
@@ -57,7 +65,10 @@ func NewKeyManager(host, port string) (*KeyManager, error) {
 	privPath := filepath.Join(keysDir, "private.der")
 	pubPath := filepath.Join(keysDir, "public.der")
 
-	km := &KeyManager{keysPath: keysDir}
+	km := &KeyManager{
+		keysPath: keysDir,
+		log:      log,
+	}
 
 	if privBytes, err := os.ReadFile(privPath); err == nil {
 		priv, err := x509.ParsePKCS1PrivateKey(privBytes)
