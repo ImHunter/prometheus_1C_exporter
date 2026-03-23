@@ -137,7 +137,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
 					lv.readMeterValues(&baseinfo, exp.meterParams)
-					lv.applyToCollection(exp.buff, exp.meterParams)
+					lv.applyToCollection(&exp.buff, exp.meterParams)
 					db.lv = *lv
 					chanOut <- db
 				}

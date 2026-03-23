@@ -228,7 +228,7 @@ func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
-	lv.applyToCollection(exp.buff, exp.meterParams)
+	lv.applyToCollection(&exp.buff, exp.meterParams)
 
 }
 

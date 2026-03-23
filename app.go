@@ -241,9 +241,13 @@ func (a *app) initHTTP() {
 	siteMux := http.NewServeMux()
 
 	// Метрики
-	siteMux.Handle("/metrics", promhttp.Handler())
-	siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
-	siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
+	// siteMux.Handle("/metrics", promhttp.Handler())
+	// siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
+	// siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
+	siteMux.Handle("/metrics_os", a.metricsHandler(a.osRegistry))
+	siteMux.Handle("/metrics_rac", a.metricsHandler(a.racRegistry))
+	siteMux.Handle("/metrics", a.metricsHandler(prometheus.DefaultGatherer, a.osRegistry, a.racRegistry))
+
 	siteMux.Handle("/Continue", expl.Continue(a.metric))
 	siteMux.Handle("/Pause", expl.Pause(a.metric))
 
@@ -650,4 +654,10 @@ func (a *app) triggerPipeline() error {
 	}
 	logger.DefaultLogger.Info("Pipeline triggered successfully")
 	return nil
+}
+
+func (a *app) metricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		promhttp.HandlerFor(prometheus.Gatherers(gatherers), promhttp.HandlerOpts{}).ServeHTTP(w, r)
+	})
 }

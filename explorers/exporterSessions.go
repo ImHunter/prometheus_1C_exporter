@@ -96,13 +96,13 @@ func (exp *ExporterSessions) getValue() {
 		lv.labelsData["infobase"] = item["infobase"]
 		lv.labelsData["appid"] = item["app-id"]
 		lv.readMeterValues(&item, exp.meterParams)
-		lv.applyToCollection(exp.buff, exp.meterParams)
+		lv.applyToCollection(&exp.buff, exp.meterParams)
 
 		lv = newLabeledValues()
 		lv.labelsData["infobase"] = item["infobase"]
 		lv.labelsData["appid"] = "*"
 		lv.readMeterValues(&item, exp.meterParams)
-		lv.applyToCollection(exp.buff, exp.meterParams)
+		lv.applyToCollection(&exp.buff, exp.meterParams)
 
 	}
 
@@ -113,7 +113,7 @@ func (exp *ExporterSessions) getValue() {
 	if exp.usedSummary(exp.settings) {
 		exp.summary.Reset()
 		for _, lv := range exp.buff.data() {
-			if lv.labelsData["appid"] == "*" {
+			if lv.labelsData["appid"] == "*" && lv.metersData["count"] != nil {
 				exp.summary.With(lv.GetWith("base")).Observe(float64(*lv.metersData["count"]))
 			}
 		}
@@ -122,7 +122,7 @@ func (exp *ExporterSessions) getValue() {
 	if exp.usedGauge(exp.settings) {
 		exp.gauge.Reset()
 		for _, lv := range exp.buff.data() {
-			if lv.labelsData["appid"] != "*" {
+			if lv.labelsData["appid"] != "*" && lv.metersData["count"] != nil {
 				exp.gauge.With(lv.GetWith("base", "appid")).Set(float64(*lv.metersData["count"]))
 			}
 		}
