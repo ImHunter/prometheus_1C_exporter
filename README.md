@@ -52,8 +52,8 @@
 ```
 
 **Windows:**
-```bash
-./1C_exporter.exe -port=9095 --settings=/path/to/settings.yaml
+```cmd
+1C_exporter.exe -port=9095 --settings=/path/to/settings.yaml
 ```
 
 Пример настроек [examples_settings.yaml](examples_settings.yaml)
@@ -101,11 +101,11 @@ scrape_configs:
 | GET | `/log` | `mode`, `n`, `from` | Читает содержимое лога: <br>`mode=first` – первые `n` строк,<br>`mode=last` – последние `n` строк,<br>`mode=range` – строки с `from` по `from+n-1` |
 | GET | `/config/get` | – | Возвращает текущий конфигурационный файл `settings.yml` |
 | POST | `/config/set` | `file` (multipart/form-data) | Загружает новый конфигурационный файл (`settings.yml`) и применяет его без перезапуска |
-| GET | `/secrets` | – | Информация о загруженных секретах (наличие, список баз, время обновления) |
-| GET | `/secrets/pub_key` | – | Возвращает публичный ключ RSA в формате PEM |
 | GET | `/debug/pprof/*` | – | Стандартные эндпоинты для профилирования Go |
 | POST | `/set_binarypath` | тело запроса содержит URL | Устанавливает новый путь к бинарному файлу в конфигурации WinSW (используется для обновления) |
 | POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода (для триггера перезапуска WinSW) |
+| GET | `/secrets` | – | Информация о загруженных секретах (наличие, список баз, время обновления) |
+| GET | `/secrets/pub_key` | – | Возвращает публичный ключ RSA в формате PEM |
 | POST | `/secrets/set` | бинарные данные | Принимает зашифрованные секреты (JSON-пакет), расшифровывает и сохраняет их |
 | POST | `/secrets/encrypt` | JSON с открытыми секретами | Шифрует открытые секреты публичным ключом и возвращает JSON-пакет для отправки на `/secrets/set` |
 
@@ -124,7 +124,7 @@ scrape_configs:
 
 - **Публичный ключ** – для получения PEM-ключа:  
   `http://localhost:9091/secrets/pub_key`  
-  Браузер покажет содержимое ключа (текст).
+  Браузер скачает файл публичного ключа.
 
 - **Конфигурация** – получить текущий файл `settings.yml`:  
   `http://localhost:9091/config/get`
@@ -148,7 +148,7 @@ scrape_configs:
   Возобновить сбор метрик `disk_metrics`:  
   `http://localhost:9091/Continue?metricNames=disk_metrics`
 
-#### Через curl (Linux, WSL, macOS)
+#### Через cURL
 
 - **Получение публичного ключа**
   ```bash
@@ -200,62 +200,9 @@ scrape_configs:
   curl "http://localhost:9091/Continue?metricNames=disk_metrics"
   ```
 
-#### Через cmd (Windows)
-
-- **Получение публичного ключа**
-  ```cmd
-  curl -o exporter.pub http://localhost:9091/secrets/pub_key
-  ```
-
-- **Кодирование зашифрованного файла в base64** (для ручной отправки)
-  ```cmd
-  certutil -encode secrets.json.enc secrets.tmp >nul && findstr /v /c:"BEGIN CERTIFICATE" /c:"END CERTIFICATE" secrets.tmp > secrets.b64 && del secrets.tmp
-  ```
-  После выполнения содержимое файла `secrets.b64` (без переноса строк) можно использовать как значение поля `encrypted_data`.
-
-- **Отправка зашифрованных секретов**
-  ```cmd
-  curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
-  ```
-
-- **Загрузка нового конфигурационного файла**
-  ```cmd
-  curl -X POST http://localhost:9091/config/set -F "file=@settings.yml"
-  ```
-
-- **Получение текущего конфигурационного файла**
-  ```cmd
-  curl http://localhost:9091/config/get --output settings.yml
-  ```
-
-- **Установка нового пути к бинарнику** (для обновления через WinSW)
-  ```cmd
-  curl -X POST http://localhost:9091/set_binarypath -H "Content-Type: text/plain" --data "https://gitlab.example.com/path/to/new/exporter.exe"
-  ```
-
-- **Эмуляция аварийного завершения**
-  ```cmd
-  curl -X POST "http://localhost:9091/shutdown_emulate?exit_code=0"
-  ```
-
-- **Чтение логов** (последние 50 строк)
-  ```cmd
-  curl "http://localhost:9091/log?mode=last&n=50"
-  ```
-
-- **Приостановка сбора метрик**
-  ```cmd
-  curl "http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5"
-  ```
-
-- **Возобновление сбора метрик**
-  ```cmd
-  curl "http://localhost:9091/Continue?metricNames=disk_metrics"
-  ```
-
 #### Шифрование секретов с помощью bash-скрипта (локально, без передачи открытых данных)
 
-Для шифрования секретов без передачи открытых данных по сети можно использовать bash-скрипт. Он требует наличия Git Bash (входит в состав Git for Windows) или Linux-окружения.
+Для шифрования секретов без передачи их по сети, можно использовать bash-скрипт. Это требует наличия Git Bash (входит в состав Git for Windows) или соответствующей утилиты Linux-окружения.
 
 **Скрипт `encrypt.sh`** (сохраните в папку с `exporter.pub` и `secrets.json`):
 
@@ -313,17 +260,17 @@ echo "Done. Encrypted file: $OUTPUT"
 
 **Запуск в Windows (Git Bash):**
 
-1. Установите Git for Windows (https://git-scm.com/download/win) с опцией "Use Git from the Windows Command Prompt" (добавляет утилиты в PATH).
-2. Откройте Git Bash.
-3. Перейдите в папку с файлами: `cd /c/путь_к_папке`
-4. Сделайте скрипт исполняемым: `chmod +x encrypt.sh`
-5. Запустите: `./encrypt.sh secrets.json`
-6. Полученный файл `secrets.json.enc` отправьте на экспортер командой:
-   ```bash
+1. Откройте Git Bash.
+2. Перейдите в папку с файлами: `cd /c/путь_к_папке`
+3. Запустите: `./encrypt.sh secrets.json`
+4. Полученный файл `secrets.json.enc` отправьте на экспортер командой:
+   ``` bash
    curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
    ```
 
-**Запуск в Linux** – аналогично, без дополнительных действий (скрипт уже исполняемый, `xxd` обычно установлен).
+**Запуск в Linux**
+
+Выполняется аналогично. Перед этим необходимо сделать скрипт исполняемым: `chmod +x encrypt.sh`
 
 ## 📊 Метрики
 
@@ -477,10 +424,10 @@ send_secrets:
 * **Шифрование секретов** – администратор может зашифровать секреты с помощью эндпоинта `/secrets/encrypt` или bash-скрипта `encrypt.sh` (см. примеры выше). Формат секретов:
   ```json
   {
-    "ras": { "login": "admin", "password": "ras_pass" },
-    "ibase_default": { "login": "default_user", "password": "default_pass" },
+    "ras": { "login": "admin", "password": "ras_pass" }, # Опционально. Логин и пароль администратора кластера.
+    "ibase_default": { "login": "default_user", "password": "default_pass" }, # Опционально. Логин и пароль для администрирования, действующий по умолчанию для всех ИБ кластера.
     "ibases": {
-      "main_db": { "login": "main_user", "password": "main_pass" }
+      "main_db": { "login": "main_user", "password": "main_pass" } # Опционально. Логин и пароль для администрирования, действующий для конкретой ИБ.
     }
   }
   ```
@@ -493,6 +440,6 @@ send_secrets:
 ## 📌 Примечания
 
 *   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/secrets/pub_key` (см. примеры выше).
-*   В режиме GitLab экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
+*   При настройке получения секретов с GitLab, экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
 *   При перезагрузке экспортер загружает последние сохраненные секреты с диска, поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
 *   Ветки экспортеров содержат только файлы настроек и переменных; код пайплайна хранится в каждой ветке и используется из нее. Для централизованного управления рекомендуется поддерживать `main-pipeline.yml` синхронизированным во всех ветках.
