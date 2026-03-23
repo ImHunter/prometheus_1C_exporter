@@ -24,13 +24,15 @@ Exporters:
 
 # Настройки для получения учетных данных баз данных.
 # Используется двумя способами:
-#   plain  - через внешний HTTP-сервис (старый способ)
-#   gitlab - через интеграцию с GitLab (безопасное хранение секретов)
+#   external - через внешний HTTP-сервис
+#   internal - внутреннее безопасное хранение секретов
 DBCredentials:
-  # Режим работы: "plain" (по умолчанию) или "gitlab". Если не указан, используется plain.
-  Source: "gitlab"   # опционально, по умолчанию plain
+  # Режим работы: "external" (по умолчанию) или "internal". 
+  # Если не указан, используется external (когда секреты берутся с внешнего http-сервиса).
+  # В режиме internal используется самостоятельное шифрование секретов и передача их экспортеру методом /secrets/set
+  Source: "internal"   # опционально, по умолчанию "external"
 
-  # --- Настройки для plain-режима (используются только при Source = plain) ---
+  # --- Настройки для external-режима (используются только при Source = external) ---
   # http-сервис который возвращает массив json с кредами к БД
   # нужно для метрики SheduleJob
   # пример json:
@@ -41,9 +43,9 @@ DBCredentials:
   #    "UserPass": ""
   #  }
   #]
-  URL: http://ca-fr-web-1/fresh/int/sm/hs/PTG_SysExchange/GetDatabase   # опционально для plain
-  User: ""                                                               # опционально для plain
-  Password: ""                                                           # опционально для plain
+  URL: http://ca-fr-web-1/fresh/int/sm/hs/PTG_SysExchange/GetDatabase   # опционально, для external
+  User: ""                                                               # опционально, для external
+  Password: ""                                                           # опционально, для external
   TLSSkipVerify: true # если true, то при обращении к сервису будут игнорироваться ошибки проверки сертификата (опционально)
 
   # --- Настройки для gitlab-режима (используются только при Source = gitlab) ---
