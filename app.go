@@ -244,9 +244,10 @@ func (a *app) initHTTP() {
 	// siteMux.Handle("/metrics", promhttp.Handler())
 	// siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
 	// siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
+	siteMux.Handle("/metrics", a.metricsHandler(a.osRegistry, a.racRegistry))
 	siteMux.Handle("/metrics_os", a.metricsHandler(a.osRegistry))
 	siteMux.Handle("/metrics_rac", a.metricsHandler(a.racRegistry))
-	siteMux.Handle("/metrics", a.metricsHandler(prometheus.DefaultGatherer, a.osRegistry, a.racRegistry))
+	siteMux.Handle("/metrics_internal", a.metricsHandler(prometheus.DefaultGatherer))
 
 	siteMux.Handle("/Continue", expl.Continue(a.metric))
 	siteMux.Handle("/Pause", expl.Pause(a.metric))
@@ -422,6 +423,7 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 			{"path": "/metrics", "method": "GET", "description": "Основные метрики Prometheus"},
 			{"path": "/metrics_os", "method": "GET", "description": "Метрики операционной системы"},
 			{"path": "/metrics_rac", "method": "GET", "description": "Метрики RAC"},
+			{"path": "/metrics_internal", "method": "GET", "description": "Метрики работы экспортера"},
 			{"path": "/Continue", "method": "GET", "description": "Возобновить сбор метрик"},
 			{"path": "/Pause", "method": "GET", "description": "Приостановить сбор метрик"},
 			{"path": "/debug/pprof/", "method": "GET", "description": "Профилирование Go"},

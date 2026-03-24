@@ -96,6 +96,7 @@ scrape_configs:
 | GET | `/metrics` | – | Основные метрики Prometheus (композиционные) |
 | GET | `/metrics_os` | – | Метрики операционной системы (CPU, память, диски) |
 | GET | `/metrics_rac` | – | Метрики RAC (лицензии, соединения, сеансы) |
+| GET | `/metrics_internal` | – | Метрики работы экспортера |
 | GET | `/Pause` | `metricNames`<br>`offsetMin` (опционально) | Приостанавливает сбор указанных метрик на заданное время (в минутах) |
 | GET | `/Continue` | `metricNames` | Возобновляет сбор указанных метрик |
 | GET | `/log` | `mode`, `n`, `from` | Читает содержимое лога: <br>`mode=first` – первые `n` строк,<br>`mode=last` – последние `n` строк,<br>`mode=range` – строки с `from` по `from+n-1` |
