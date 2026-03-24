@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,9 +54,6 @@ func (lv *labeledValues) readMeterValues(rasRowItem *map[string]string, meterPar
 
 func (lv *labeledValues) applyToCollection(buff *labeledValuesCollection, meterParams MeterParamsCollection) {
 
-	buff.mu.Lock()
-	defer buff.mu.Unlock()
-
 	var readedVal *int64
 	var existingVal *int64
 
@@ -105,17 +101,15 @@ func (lv *labeledValues) clear() {
 type labeledValuesMapKey [3]string
 type labeledValuesMap map[labeledValuesMapKey]*labeledValues
 type labeledValuesCollection struct {
-	mu        sync.RWMutex
 	dataMap   labeledValuesMap
 	keyFields []string
 }
 
-func newLabeledValuesCollection(keys ...string) labeledValuesCollection {
-	vc := labeledValuesCollection{
+func newLabeledValuesCollection(keys ...string) *labeledValuesCollection {
+	return &labeledValuesCollection{
 		dataMap:   labeledValuesMap{},
 		keyFields: keys,
 	}
-	return vc
 }
 
 func (buff *labeledValuesCollection) data() labeledValuesMap {
@@ -132,15 +126,12 @@ func (buff *labeledValuesCollection) deleteByKey(key labeledValuesMapKey) {
 }
 
 func (buff *labeledValuesCollection) get(key labeledValuesMapKey) (*labeledValues, bool) {
-	buff.mu.RLock()
-	defer buff.mu.RUnlock()
 	val, ok := buff.dataMap[key]
 	return val, ok
 }
 
 func (buff *labeledValuesCollection) set(key labeledValuesMapKey, lv *labeledValues) {
-	buff.mu.Lock()
-	defer buff.mu.Unlock()
+
 	if lv != nil {
 		buff.dataMap[key] = lv
 	} else if _, ok := buff.get(key); ok {

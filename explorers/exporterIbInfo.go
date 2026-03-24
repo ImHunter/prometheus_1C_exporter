@@ -23,7 +23,7 @@ type ExporterInfobaseInfo struct {
 	nextScrapeTime *time.Time
 	currentBackoff time.Duration
 	meterParams    MeterParamsCollection
-	buff           labeledValuesCollection
+	buff           *labeledValuesCollection
 }
 
 var (
@@ -71,12 +71,17 @@ func (exp *ExporterInfobaseInfo) getValue() {
 	exp.logger.Info("получение данных экспортера")
 
 	exp.gauge.Reset()
+	var gVal *int64
 	if err := exp.getData(); err == nil {
 		for _, lv := range exp.buff.data() {
 			for _, mp := range exp.meterParams {
+				gVal = lv.metersData[mp.Name]
+				if gVal == nil {
+					continue
+				}
 				with := lv.GetWith("base")
 				with["datatype"] = mp.Name
-				exp.gauge.With(with).Set(float64(*lv.metersData[mp.Name]))
+				exp.gauge.With(with).Set(float64(*gVal))
 			}
 		}
 	} else {
@@ -137,7 +142,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
 					lv.readMeterValues(&baseinfo, exp.meterParams)
-					lv.applyToCollection(&exp.buff, exp.meterParams)
+					lv.applyToCollection(exp.buff, exp.meterParams)
 					db.lv = *lv
 					chanOut <- db
 				}

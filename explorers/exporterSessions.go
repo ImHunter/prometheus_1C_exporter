@@ -3,6 +3,7 @@ package exporter
 import (
 	"fmt"
 	"os/exec"
+	"runtime/trace"
 	"slices"
 	"strings"
 	"sync"
@@ -71,12 +72,13 @@ func (exp *ExporterSessions) Construct(s *settings.Settings, metricName string) 
 }
 
 func (exp *ExporterSessions) initAllMeterParams() {
-
 	params := &(exp.meterParams)
 	params.add("count", "count", ApplyMethodInc).funcValueReader = createSessReader()
 }
 
 func (exp *ExporterSessions) getValue() {
+
+	defer trace.StartRegion(exp.ctx, "Sessions.getValue").End()
 
 	if !exp.isAllowedReading() {
 		return
@@ -90,19 +92,22 @@ func (exp *ExporterSessions) getValue() {
 		return
 	}
 
+	exp.mx.Lock()
+	defer exp.mx.Unlock()
+
 	for _, item := range ses {
 
 		lv := newLabeledValues()
 		lv.labelsData["infobase"] = item["infobase"]
 		lv.labelsData["appid"] = item["app-id"]
 		lv.readMeterValues(&item, exp.meterParams)
-		lv.applyToCollection(&exp.buff, exp.meterParams)
+		lv.applyToCollection(exp.buff, exp.meterParams)
 
 		lv = newLabeledValues()
 		lv.labelsData["infobase"] = item["infobase"]
 		lv.labelsData["appid"] = "*"
 		lv.readMeterValues(&item, exp.meterParams)
-		lv.applyToCollection(&exp.buff, exp.meterParams)
+		lv.applyToCollection(exp.buff, exp.meterParams)
 
 	}
 
@@ -131,6 +136,9 @@ func (exp *ExporterSessions) getValue() {
 }
 
 func (exp *ExporterSessions) getSessions() (sesData []map[string]string, err error) {
+
+	defer trace.StartRegion(exp.ctx, "Sessions.getSessions").End()
+
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
@@ -165,6 +173,8 @@ func (exp *ExporterSessions) Collect(ch chan<- prometheus.Metric) {
 	if exp.isLocked.Load() {
 		return
 	}
+
+	defer trace.StartRegion(exp.ctx, "Sessions.Collect").End()
 
 	exp.getValue()
 	if exp.usedSummary(exp.settings) {

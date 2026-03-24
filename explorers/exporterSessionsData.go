@@ -116,17 +116,20 @@ func (exp *ExporterSessionsData) getValue() {
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
-	if exp.usedSummary(exp.settings) {
+	usedGauge := exp.usedGauge(exp.settings) && exp.gauge != nil
+	usedSummary := exp.usedSummary(exp.settings) && exp.summary != nil
+
+	if usedSummary {
 		exp.summary.Reset()
 	}
 
-	if exp.usedGauge(exp.settings) {
+	if usedGauge {
 		exp.gauge.Reset()
 	}
 
 	if exp.usedHistogram(exp.settings) {
 		if exp.usedExemplars() {
-			exemplarChecker = newExemplarChecker(&exp.buff)
+			exemplarChecker = newExemplarChecker(exp.buff)
 			exemplarChecker.findRandomExemplars(5)
 			usedExemplars = true
 		}
@@ -137,7 +140,7 @@ func (exp *ExporterSessionsData) getValue() {
 
 	for k, lv := range exp.buff.dataMap {
 
-		if exp.usedSummary(exp.settings) {
+		if usedSummary {
 			with = lv.GetWithAll()
 			with["id"] = k[0]
 			for n, m := range lv.metersData {
@@ -149,7 +152,7 @@ func (exp *ExporterSessionsData) getValue() {
 			}
 		}
 
-		if exp.usedGauge(exp.settings) {
+		if usedGauge {
 			with = lv.GetWithAll()
 			with["id"] = k[0]
 			for n, m := range lv.metersData {
@@ -228,7 +231,7 @@ func (exp *ExporterSessionsData) loadRasRow(rasRowItem *map[string]string) {
 	exp.mx.Lock()
 	defer exp.mx.Unlock()
 
-	lv.applyToCollection(&exp.buff, exp.meterParams)
+	lv.applyToCollection(exp.buff, exp.meterParams)
 
 }
 
