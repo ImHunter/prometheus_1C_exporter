@@ -76,9 +76,9 @@ type Settings struct {
 	} `yaml:"MetricKinds" default:"{\"Session\": [\"Summary\"], \"SessionsData\": [\"Summary\"]}"`
 
 	Other *struct {
-		MetricNamePrefix   string `yaml:"MetricNamePrefix"`
-		UseExemplars       bool   `yaml:"UseExemplars" default:"false"`
-		DisableGoCollector bool   `yaml:"DisableGoCollector" default:"false"`
+		MetricNamePrefix          string `yaml:"MetricNamePrefix"`
+		UseExemplars              bool   `yaml:"UseExemplars" default:"false"`
+		DisableMetricsCompression bool   `yaml:"DisableMetricsCompression" default:"false"`
 	} `yaml:"Other"`
 
 	WinSW *struct {
@@ -245,9 +245,9 @@ func (s *Settings) GetRASHostPort() string {
 	return rasHostPort
 }
 
-func (s *Settings) GetDisableGoCollector() bool {
+func (s *Settings) GetDisableMetricsCompression() bool {
 	if s.Other != nil {
-		return s.Other.DisableGoCollector
+		return s.Other.DisableMetricsCompression
 	}
 	return false
 }

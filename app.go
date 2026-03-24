@@ -660,6 +660,9 @@ func (a *app) triggerPipeline() error {
 
 func (a *app) metricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		promhttp.HandlerFor(prometheus.Gatherers(gatherers), promhttp.HandlerOpts{}).ServeHTTP(w, r)
+		opts := promhttp.HandlerOpts{
+			DisableCompression: a.settings.GetDisableMetricsCompression(),
+		}
+		promhttp.HandlerFor(prometheus.Gatherers(gatherers), opts).ServeHTTP(w, r)
 	})
 }
