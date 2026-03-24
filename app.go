@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
@@ -198,7 +199,7 @@ func (a *app) renewSettings() {
 	// Запуск пайплайна, если включен внутренний режим и GitLab настроен
 	if a.settings.IsInternalSecrets() && a.settings.GitlabConfigured() && a.keyManager != nil {
 		go func() {
-			time.Sleep(2 * time.Second)
+			time.Sleep(time.Hour * time.Duration(rand.Intn(6)+2))
 			if err := a.triggerPipeline(); err != nil {
 				logger.DefaultLogger.Errorf("Failed to trigger pipeline after reload: %v", err)
 			}
@@ -630,13 +631,10 @@ func (a *app) triggerPipeline() error {
 	if err != nil {
 		return fmt.Errorf("invalid RepoURL: %w", err)
 	}
+	baseURL := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
 	projectPath := strings.TrimPrefix(parsed.Path, "/")
 	projectPath = strings.TrimSuffix(projectPath, ".git")
-	if projectPath == "" {
-		return fmt.Errorf("could not extract project path from RepoURL")
-	}
 	encodedPath := url.PathEscape(projectPath)
-	baseURL := strings.TrimSuffix(gl.RepoURL, ".git")
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/trigger/pipeline", baseURL, encodedPath)
 
 	data := url.Values{}
@@ -645,11 +643,13 @@ func (a *app) triggerPipeline() error {
 	if gl.SecretsFile != "" {
 		data.Set("variables[SECRETS_FILE]", gl.SecretsFile)
 	}
+
 	resp, err := http.PostForm(apiURL, data)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("gitlab trigger failed with status %s: %s", resp.Status, body)
