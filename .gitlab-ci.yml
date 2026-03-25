@@ -1,0 +1,7 @@
+release:
+  stage: release
+  image: goreleaser/goreleaser:v2.1.0
+  script:
+    - goreleaser release --clean
+  only:
+    - tags

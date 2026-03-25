@@ -21,8 +21,13 @@ var (
 )
 
 func main() {
+
 	var settingsPath, port string
 	var help, v bool
+
+	if version == "undefined" {
+		version = "1.5.1.25"
+	}
 
 	flag.StringVar(&settingsPath, "settings", "", "Путь к файлу настроек")
 	flag.StringVar(&port, "port", "9091", "Порт для прослушивания")

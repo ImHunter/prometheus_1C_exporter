@@ -426,7 +426,7 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 	info := map[string]interface{}{
 		"service":     "Prometheus Exporter для кластера 1С",
 		"description": "Экспортер метрик Prometheus",
-		"version":     "1.5.1.25",
+		"version":     version,
 		"status":      "running",
 		"endpoints": []map[string]string{
 			{"path": "/", "method": "GET", "description": "Информационная страница"},

@@ -1,0 +1,36 @@
+# .goreleaser.yml
+project_name: 1C_exporter
+
+builds:
+  - id: exporter
+    main: .
+    binary: 1C_exporter
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.gitCommit={{.ShortCommit}}
+    # Для Windows нужно добавить расширение .exe
+    hooks:
+      post:
+        - cmd: |
+            if [ "{{ .Os }}" = "windows" ]; then
+              mv "dist/{{ .Binary }}_{{ .Os }}_{{ .Arch }}_{{ .Target }}/{{ .Binary }}" "dist/{{ .Binary }}_{{ .Os }}_{{ .Arch }}_{{ .Target }}/{{ .Binary }}.exe"
+            fi
+
+archives:
+  - format: binary
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+release:
+  gitlab:
+    owner: DolininS
+    name: prometheus_1C_exporter
+  draft: false
