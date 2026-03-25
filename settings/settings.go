@@ -50,13 +50,14 @@ type Settings struct {
 	} `yaml:"Exporters"`
 
 	DBCredentials *struct {
-		URL           string                `yaml:"URL"`              // URL внешнего сервиса (для plain)
-		User          string                `yaml:"User"`             // пользователь для внешнего сервиса (plain)
-		Password      string                `yaml:"Password"`         // пароль для внешнего сервиса (plain)
-		TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`    // пропускать проверку TLS (plain)
-		Source        TypeCredentialsSource `yaml:"Source"`           // источник: "", "plain" или "gitlab"
-		GitLab        *GitLabSettings       `yaml:"GitLab,omitempty"` // параметры GitLab (если Source == "gitlab")
+		URL           string                `yaml:"URL"`           // URL внешнего сервиса (для plain)
+		User          string                `yaml:"User"`          // пользователь для внешнего сервиса (plain)
+		Password      string                `yaml:"Password"`      // пароль для внешнего сервиса (plain)
+		TLSSkipVerify bool                  `yaml:"TLSSkipVerify"` // пропускать проверку TLS (plain)
+		Source        TypeCredentialsSource `yaml:"Source"`        // источник: "", "external" или "internal"
 	} `yaml:"DBCredentials"`
+
+	GitLab *GitLabSettings `yaml:"GitLab,omitempty"` // параметры GitLab, если требуется инициировать получение секретов из GitLab
 
 	secrets            *IBCredentials
 	secretsMu          sync.RWMutex
@@ -171,17 +172,19 @@ func (s *Settings) getLogPass(ibname string) (login, pass string) {
 // GetLogPass возвращает логин и пароль для базы с именем ibName
 // (используется в explorers/exporterIbInfo.go)
 func (s *Settings) GetLogPass(ibName string) (login, pass string) {
-	s.secretsMu.RLock()
-	sec := s.secrets
-	s.secretsMu.RUnlock()
-
-	// Пытаемся получить из GitLab-секретов (работает только в режиме gitlab)
-	if sec != nil {
-		if l, p, ok := sec.getForBase(ibName); ok {
-			return l, p
+	if s.IsInternalSecrets() {
+		s.secretsMu.RLock()
+		sec := s.secrets
+		s.secretsMu.RUnlock()
+		if sec != nil {
+			if l, p, ok := sec.getForBase(ibName); ok {
+				return l, p
+			}
 		}
+		// если секретов нет, но режим internal – возвращаем пустые строки
+		return "", ""
 	}
-	// Если нет, используем метод plain
+	// external – используем старый механизм
 	return s.getLogPass(ibName)
 }
 
@@ -208,7 +211,7 @@ func (s *Settings) RAC_Host() string {
 }
 
 func (s *Settings) RAC_Login() string {
-	if s.secrets != nil && s.secrets.RAS != nil {
+	if s.IsInternalSecrets() && s.secrets != nil && s.secrets.RAS != nil {
 		return s.secrets.RAS.Login
 	}
 	if s.RAC != nil {
@@ -218,7 +221,7 @@ func (s *Settings) RAC_Login() string {
 }
 
 func (s *Settings) RAC_Pass() string {
-	if s.secrets != nil && s.secrets.RAS != nil {
+	if s.IsInternalSecrets() && s.secrets != nil && s.secrets.RAS != nil {
 		return s.secrets.RAS.Password
 	}
 	if s.RAC != nil {
@@ -396,11 +399,10 @@ func (s *Settings) GetSecretsInfo() (hasSecrets, hasDefault, hasRas bool, bases 
 
 // GitlabConfigured проверяет, заполнены ли настройки GitLab (независимо от режима)
 func (s *Settings) GitlabConfigured() bool {
-	if s.DBCredentials == nil || s.DBCredentials.GitLab == nil {
+	if s.GitLab == nil {
 		return false
 	}
-	gl := s.DBCredentials.GitLab
-	return gl.RepoURL != "" && gl.Branch != "" && gl.TriggerToken != ""
+	return s.GitLab.RepoURL != "" && s.GitLab.Branch != "" && s.GitLab.TriggerToken != ""
 }
 
 // IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов

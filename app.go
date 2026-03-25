@@ -284,6 +284,15 @@ func (a *app) initHTTP() {
 	}
 }
 
+func (a *app) metricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		opts := promhttp.HandlerOpts{
+			DisableCompression: a.settings.GetDisableMetricsCompression(),
+		}
+		promhttp.HandlerFor(prometheus.Gatherers(gatherers), opts).ServeHTTP(w, r)
+	})
+}
+
 // ----- Конфигурация -----
 
 func (a *app) setConfigHandler(w http.ResponseWriter, r *http.Request) {
@@ -622,7 +631,7 @@ func (a *app) triggerPipeline() error {
 		logger.DefaultLogger.Debug("triggerPipeline: internal secrets not configured or keyManager missing")
 		return nil
 	}
-	gl := a.settings.DBCredentials.GitLab
+	gl := a.settings.GitLab
 	if gl.RepoURL == "" || gl.Branch == "" || gl.TriggerToken == "" {
 		return fmt.Errorf("incomplete GitLab settings: RepoURL, Branch, TriggerToken required")
 	}
@@ -656,13 +665,4 @@ func (a *app) triggerPipeline() error {
 	}
 	logger.DefaultLogger.Info("Pipeline triggered successfully")
 	return nil
-}
-
-func (a *app) metricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		opts := promhttp.HandlerOpts{
-			DisableCompression: a.settings.GetDisableMetricsCompression(),
-		}
-		promhttp.HandlerFor(prometheus.Gatherers(gatherers), opts).ServeHTTP(w, r)
-	})
 }
