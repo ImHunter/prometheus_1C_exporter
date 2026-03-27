@@ -100,10 +100,11 @@ type InfobaseCredentials struct {
 
 // GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	RepoURL      string `yaml:"RepoURL"`      // адрес репозитория, например "https://gitlab.example.com/group/project.git"
-	Branch       string `yaml:"Branch"`       // ветка, например "web"
-	TriggerToken string `yaml:"TriggerToken"` // токен для запуска пайплайнов
-	SecretsFile  string `yaml:"SecretsFile"`  // имя файла с зашифрованными секретами (по умолчанию "secrets.json.enc")
+	RepoURL           string `yaml:"RepoURL"`                     // адрес репозитория, например "https://gitlab.example.com/group/project.git"
+	Branch            string `yaml:"Branch"`                      // ветка, например "web"
+	TriggerToken      string `yaml:"TriggerToken"`                // токен для запуска пайплайнов
+	SecretsFile       string `yaml:"SecretsFile"`                 // имя файла с зашифрованными секретами (по умолчанию "secrets.json.enc")
+	ReleasesProjectID int    `yaml:"ReleasesProjectID,omitempty"` // ID проекта для самообновления
 }
 
 // Структуры для секретов
@@ -435,4 +436,13 @@ func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) 
 		return c.IbaseDefault.Login, c.IbaseDefault.Password, true
 	}
 	return "", "", false
+}
+
+// GetReleasesProjectID возвращает ID проекта GitLab для самообновления,
+// а также флаг, указывающий, задан ли он ( > 0 ).
+func (s *Settings) GetReleasesProjectID() (int, bool) {
+	if s.GitLab == nil || s.GitLab.ReleasesProjectID <= 0 {
+		return 0, false
+	}
+	return s.GitLab.ReleasesProjectID, true
 }
