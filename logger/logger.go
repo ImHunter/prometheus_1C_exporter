@@ -49,51 +49,64 @@ func InitLogger(logDir string, ll int) {
 	SetLevel(ll)
 }
 
+import (
+    "runtime"
+    // ... другие импорты
+)
+
+func defaultLogPath() string {
+    if runtime.GOOS == "windows" {
+        programData := os.Getenv("ProgramData")
+        if programData != "" {
+            return filepath.Join(programData, "Prometheus1CExporter", "logs", defaultLogFilename)
+        }
+        // fallback: папка logs рядом с исполняемым файлом
+        exe, _ := os.Executable()
+        return filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
+    }
+    // Linux / Unix
+    return filepath.Join("/var/log/1c_exporter", defaultLogFilename)
+}
+
 func newLogger(logDir string) *zap.SugaredLogger {
-	var logWriter io.Writer
+    var logWriter io.Writer
 
-	if isTesting() {
-		logWriter = os.Stdout
-		currentLogFile = "stdout"
-	} else {
-		var logPath string
-		if logDir == "" {
-			// не задан – используем папку logs рядом с исполняемым файлом
-			exe, err := os.Executable()
-			if err != nil {
-				// fallback: текущая директория
-				logPath = filepath.Join(".", defaultLogDir, defaultLogFilename)
-			} else {
-				logPath = filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
-			}
-		} else {
-			// задан – используем указанный путь как директорию
-			logPath = filepath.Join(logDir, defaultLogFilename)
-		}
-		currentLogFile = logPath
+    if isTesting() {
+        logWriter = os.Stdout
+        currentLogFile = "stdout"
+    } else {
+        var logPath string
+        if logDir == "" {
+            // не задан – используем системный путь по умолчанию
+            logPath = defaultLogPath()
+        } else {
+            // задан – используем указанный путь как директорию (без добавления подпапки logs)
+            logPath = filepath.Join(logDir, defaultLogFilename)
+        }
+        currentLogFile = logPath
 
-		dir := filepath.Dir(logPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			// Не удалось создать папку – пишем в stdout
-			logWriter = os.Stdout
-			currentLogFile = "stdout"
-		} else {
-			logWriter = &lumberjack.Logger{
-				Filename:   logPath,
-				MaxSize:    10,
-				MaxBackups: 10,
-				MaxAge:     5,
-			}
-		}
-	}
+        dir := filepath.Dir(logPath)
+        if err := os.MkdirAll(dir, 0755); err != nil {
+            // Не удалось создать папку – пишем в stdout
+            logWriter = os.Stdout
+            currentLogFile = "stdout"
+        } else {
+            logWriter = &lumberjack.Logger{
+                Filename:   logPath,
+                MaxSize:    10,
+                MaxBackups: 10,
+                MaxAge:     5,
+            }
+        }
+    }
 
-	core := zapcore.NewCore(
-		zapcore.NewJSONEncoder(zap.NewDevelopmentEncoderConfig()),
-		zapcore.AddSync(logWriter),
-		atom,
-	)
+    core := zapcore.NewCore(
+        zapcore.NewJSONEncoder(zap.NewDevelopmentEncoderConfig()),
+        zapcore.AddSync(logWriter),
+        atom,
+    )
 
-	return zap.New(core).Sugar()
+    return zap.New(core).Sugar()
 }
 
 func SetLevel(level int) {
