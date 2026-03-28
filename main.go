@@ -62,7 +62,7 @@ func main() {
 		if err != nil {
 			logger.Errorf("Auto-update failed: %v", err)
 		} else if updated {
-			logger.Info("Auto-update successful, exiting for restart")
+			logger.Info("Auto-update: Successfully, exiting for restart")
 			os.Exit(1)
 		} else {
 			logger.Info("Auto-update: already up to date")
