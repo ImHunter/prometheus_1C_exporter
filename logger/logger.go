@@ -45,7 +45,7 @@ func init() {
 }
 
 func InitLogger(logDir string, ll int) {
-	DefaultLogger = newLogger(logDir) // передаём исходный logDir без изменений
+	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
 	SetLevel(ll)
 }
 
@@ -58,8 +58,14 @@ func newLogger(logDir string) *zap.SugaredLogger {
 	} else {
 		var logPath string
 		if logDir == "" {
-			// не задан – используем подпапку logs рядом с исполняемым файлом
-			logPath = filepath.Join(defaultLogDir, defaultLogFilename)
+			// не задан – используем папку logs рядом с исполняемым файлом
+			exe, err := os.Executable()
+			if err != nil {
+				// fallback: текущая директория
+				logPath = filepath.Join(".", defaultLogDir, defaultLogFilename)
+			} else {
+				logPath = filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
+			}
 		} else {
 			// задан – используем указанный путь как директорию
 			logPath = filepath.Join(logDir, defaultLogFilename)
