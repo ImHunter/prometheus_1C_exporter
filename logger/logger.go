@@ -59,11 +59,19 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		logPath := filepath.Join(logDir, defaultLogFilename)
 		currentLogFile = logPath
 
-		logWriter = &lumberjack.Logger{
-			Filename:   logPath,
-			MaxSize:    10, // megabytes
-			MaxBackups: 10,
-			MaxAge:     5, // days
+		// Создаём директорию, если её нет
+		dir := filepath.Dir(logPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			// Не удалось создать директорию – пишем в stdout
+			logWriter = os.Stdout
+			currentLogFile = "stdout"
+		} else {
+			logWriter = &lumberjack.Logger{
+				Filename:   logPath,
+				MaxSize:    10, // megabytes
+				MaxBackups: 10,
+				MaxAge:     5, // days
+			}
 		}
 	}
 
