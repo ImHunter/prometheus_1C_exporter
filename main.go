@@ -59,12 +59,12 @@ func main() {
 	if id, ok := s.GetReleasesProjectID(); ok {
 		updated, err := checkAndUpdate(id, version)
 		if err != nil {
-			logger.Errorf("Auto-update failed: %v", err)
+			logger.Errorf("Auto-update: Failed: %v", err)
 		} else if updated {
-			logger.Warn("Restarting for auto-update")
+			logger.Warn("Auto-update: Successfully, restarting")
 			os.Exit(1)
 		} else {
-			logger.Info("Self-update skipped")
+			logger.Info("Auto-update: Skipped")
 		}
 	}
 
