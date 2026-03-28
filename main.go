@@ -57,17 +57,18 @@ func main() {
 	logger.Infof("Версия: %q, gitCommit: %q", version, gitCommit)
 
 	if id, ok := s.GetReleasesProjectID(); ok {
+		logger.Infof("Auto-update: found project ID %d, checking for updates", id)
 		updated, err := checkAndUpdate(id, version)
 		if err != nil {
-			logger.Errorf("Auto-update: Failed: %v", err)
+			logger.Errorf("Auto-update failed: %v", err)
 		} else if updated {
-			logger.Warn("Auto-update: Successfully, restarting")
+			logger.Info("Auto-update successful, exiting for restart")
 			os.Exit(1)
 		} else {
-			logger.Info("Auto-update: Skipped")
+			logger.Info("Auto-update: already up to date")
 		}
 	} else {
-		logger.Error("Auto-update: ProjectID not detected", err)
+		logger.Info("Auto-update: not configured (ReleasesProjectID missing or zero)")
 	}
 
 	if err := svc.Run(&app{settings: s, port: port}); err != nil {
