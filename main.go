@@ -64,7 +64,7 @@ func main() {
 			logger.Warn("Restarting for auto-update")
 			os.Exit(1)
 		} else {
-			logger.Info("Self-updated")
+			logger.Info("Self-update skipped")
 		}
 	}
 
