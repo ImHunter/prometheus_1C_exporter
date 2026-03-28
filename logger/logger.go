@@ -38,6 +38,11 @@ var (
 	currentLogFile string
 )
 
+func init() {
+	atom = zap.NewAtomicLevel()
+	NopLogger = newNopLogger()
+}
+
 func InitLogger(logDir string, ll int) {
 	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
 	SetLevel(ll)
