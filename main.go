@@ -66,6 +66,8 @@ func main() {
 		} else {
 			logger.Info("Auto-update: Skipped")
 		}
+	} else {
+		logger.Error("Auto-update: ProjectID not detected", err)
 	}
 
 	if err := svc.Run(&app{settings: s, port: port}); err != nil {
