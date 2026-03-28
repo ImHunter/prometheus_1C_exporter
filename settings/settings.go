@@ -100,11 +100,11 @@ type InfobaseCredentials struct {
 
 // GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	RepoURL           string `yaml:"RepoURL"`                     // адрес репозитория, например "https://gitlab.example.com/group/project.git"
-	Branch            string `yaml:"Branch"`                      // ветка, например "web"
-	TriggerToken      string `yaml:"TriggerToken"`                // токен для запуска пайплайнов
-	SecretsFile       string `yaml:"SecretsFile"`                 // имя файла с зашифрованными секретами (по умолчанию "secrets.json.enc")
-	ReleasesProjectID int    `yaml:"ReleasesProjectID,omitempty"` // ID проекта для самообновления
+	GitLabHome  string `yaml:"GitLabHome"`            // базовый URL GitLab, например "https://gitlab.example.com"
+	ProjectID   int    `yaml:"ProjectID"`             // ID проекта для API
+	Branch      string `yaml:"Branch"`                // ветка для триггера
+	SecretsFile string `yaml:"SecretsFile"`           // имя файла секретов (по умолчанию "secrets.json.enc")
+	AccessToken string `yaml:"AccessToken,omitempty"` // Personal Access Token с правами api (для всех операций)
 }
 
 // Структуры для секретов
@@ -403,7 +403,7 @@ func (s *Settings) GitlabConfigured() bool {
 	if s.GitLab == nil {
 		return false
 	}
-	return s.GitLab.RepoURL != "" && s.GitLab.Branch != "" && s.GitLab.TriggerToken != ""
+	return s.GitLab.GitLabHome != "" && s.GitLab.ProjectID != 0 && s.GitLab.Branch != "" && s.GitLab.AccessToken != ""
 }
 
 // IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов
@@ -440,9 +440,10 @@ func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) 
 
 // GetReleasesProjectID возвращает ID проекта GitLab для самообновления,
 // а также флаг, указывающий, задан ли он ( > 0 ).
+// Берется из ProjectID. Но вдруг захотим вести в разных проектах.
 func (s *Settings) GetReleasesProjectID() (int, bool) {
-	if s.GitLab == nil || s.GitLab.ReleasesProjectID <= 0 {
+	if s.GitLab == nil || s.GitLab.ProjectID <= 0 {
 		return 0, false
 	}
-	return s.GitLab.ReleasesProjectID, true
+	return s.GitLab.ProjectID, true
 }

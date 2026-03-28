@@ -632,28 +632,22 @@ func (a *app) triggerPipeline() error {
 		return nil
 	}
 	gl := a.settings.GitLab
-	if gl.RepoURL == "" || gl.Branch == "" || gl.TriggerToken == "" {
-		return fmt.Errorf("incomplete GitLab settings: RepoURL, Branch, TriggerToken required")
-	}
-
-	parsed, err := url.Parse(gl.RepoURL)
-	if err != nil {
-		return fmt.Errorf("invalid RepoURL: %w", err)
-	}
-	baseURL := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
-	projectPath := strings.TrimPrefix(parsed.Path, "/")
-	projectPath = strings.TrimSuffix(projectPath, ".git")
-	encodedPath := url.PathEscape(projectPath)
-	apiURL := fmt.Sprintf("%s/api/v4/projects/%s/trigger/pipeline", baseURL, encodedPath)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.GitLabHome, gl.ProjectID)
 
 	data := url.Values{}
-	data.Set("token", gl.TriggerToken)
 	data.Set("ref", gl.Branch)
 	if gl.SecretsFile != "" {
 		data.Set("variables[SECRETS_FILE]", gl.SecretsFile)
 	}
 
-	resp, err := http.PostForm(apiURL, data)
+	req, err := http.NewRequest("POST", apiURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", gl.AccessToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http request failed: %w", err)
 	}

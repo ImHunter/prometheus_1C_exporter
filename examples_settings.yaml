@@ -49,16 +49,12 @@ DBCredentials:
   TLSSkipVerify: true # если true, то при обращении к сервису будут игнорироваться ошибки проверки сертификата (опционально)
 
 # --- Настройки для GitLab (используются только при Source = internal) ---
-# Теперь это отдельный блок на одном уровне с DBCredentials
 GitLab:
-  # URL репозитория GitLab, где хранятся конфигурационные файлы и секреты (например, "https://gitlab.example.com/group/project.git")
-  RepoURL: "https://gitlab.example.com/1c-exporter-configs.git"   # обязательно для internal
-  # Ветка репозитория RepoURL, соответствующая данному экземпляру экспортера (например, "ut-prod", "zup-prod", "trade")
-  Branch: "trade"                                                    # обязательно для internal
-  # Токен для запуска пайплайнов (Trigger Token), создаётся в настройках GitLab-проекта
-  TriggerToken: "glptt-xxxxxxxxxxxxxxxx"                           # обязательно для internal
-  # Имя файла с зашифрованными секретами в репозитории (по умолчанию "secrets.json.enc")
-  # SecretsFile: "secrets.json.enc"                                  # опционально, по умолчанию secrets.json.enc
+  GitLabHome: "https://gitlab.example.com"
+  ProjectID: 123456
+  Branch: "main"
+  SecretsFile: "secrets.json.enc"
+  AccessToken: "glpat-xxxxxxxxxxxxxxxx"   # Personal Access Token с правами api
 
 RAC:
   Path: "C:\\Program Files\\1cv8\\8.3.21.1644\\bin\\rac.exe"

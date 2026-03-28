@@ -14,7 +14,7 @@ func TestNewKeyManager_Generate(t *testing.T) {
 	host := "generate-host"
 	port := "1"
 
-	km, err := NewKeyManager(host, port)
+	km, err := NewKeyManager(host, port, nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}
@@ -41,13 +41,13 @@ func TestNewKeyManager_Load(t *testing.T) {
 	host := "load-host"
 	port := "2"
 
-	km1, err := NewKeyManager(host, port)
+	km1, err := NewKeyManager(host, port, nil)
 	if err != nil {
 		t.Fatalf("first NewKeyManager failed: %v", err)
 	}
 	keyID1 := fingerprint(km1.publicKey)
 
-	km2, err := NewKeyManager(host, port)
+	km2, err := NewKeyManager(host, port, nil)
 	if err != nil {
 		t.Fatalf("second NewKeyManager failed: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestNewKeyManager_EmptyPort(t *testing.T) {
 	host := "empty-port-host"
 	port := ""
 
-	km, err := NewKeyManager(host, port)
+	km, err := NewKeyManager(host, port, nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager with empty port failed: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestNewKeyManager_EmptyPort(t *testing.T) {
 }
 
 func TestPublicKeyPEM(t *testing.T) {
-	km, err := NewKeyManager("pem-host", "3")
+	km, err := NewKeyManager("pem-host", "3", nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestEncryptDecrypt(t *testing.T) {
 	host := "test-encrypt"
 	port := "4"
 
-	km, err := NewKeyManager(host, port)
+	km, err := NewKeyManager(host, port, nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}
@@ -141,11 +141,11 @@ func TestEncryptDecrypt(t *testing.T) {
 
 // TestEncryptDecryptWithDifferentKeys проверяет, что нельзя расшифровать чужим ключом.
 func TestEncryptDecryptWithDifferentKeys(t *testing.T) {
-	km1, err := NewKeyManager("host1", "1")
+	km1, err := NewKeyManager("host1", "1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	km2, err := NewKeyManager("host2", "2")
+	km2, err := NewKeyManager("host2", "2", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestEncryptDecryptWithDifferentKeys(t *testing.T) {
 func TestEncryptDecryptWithPublicKey(t *testing.T) {
 	// Создаем временный keymanager (ключи будут созданы во временной директории)
 	// Используем уникальные host/port, чтобы не конфликтовать с другими тестами.
-	km, err := NewKeyManager("test-encrypt-pub", "1")
+	km, err := NewKeyManager("test-encrypt-pub", "1", nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestEncryptDecryptWithExampleFile(t *testing.T) {
 	}`
 	data := []byte(exampleJSON)
 
-	km, err := NewKeyManager("example-host", "2")
+	km, err := NewKeyManager("example-host", "2", nil)
 	if err != nil {
 		t.Fatalf("NewKeyManager failed: %v", err)
 	}

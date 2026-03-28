@@ -98,7 +98,7 @@ func checkAndUpdate(projectID int, currentVersion string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("parse current version: %w", err)
 	}
-	latestVer, err := semver.NewVersion(latest.Version().String())
+	latestVer, err := semver.NewVersion(latest.Version())
 	if err != nil {
 		return false, fmt.Errorf("parse latest version: %w", err)
 	}

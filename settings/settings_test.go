@@ -1,65 +1,54 @@
 package settings
 
 import (
-	"bytes"
 	"context"
-	"io"
-	"net/http"
 	"os"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
-	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/jarcoal/httpmock"
 )
 
 func Test_GetDeactivateAndReset(t *testing.T) {
-	// httpmock.Activate()
-	// defer httpmock.DeactivateAndReset()
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	httpmock.RegisterResponder("GET", "http://localhost/DBCredentials",
+		httpmock.NewStringResponder(200, `[{"Name":"hrmcorp-n17","UserName":"testUser","UserPass":"***"}]`))
 
 	s := &Settings{
 		mx: new(sync.RWMutex),
 		DBCredentials: &struct {
-			URL           string `yaml:"URL" json:"URL,omitempty"`
-			User          string `yaml:"User" json:"user,omitempty"`
-			Password      string `yaml:"Password" json:"password,omitempty"`
-			TLSSkipVerify bool   `yaml:"TLSSkipVerify" json:"TLSSkipVerify,omitempty"`
+			URL           string                `yaml:"URL"`
+			User          string                `yaml:"User"`
+			Password      string                `yaml:"Password"`
+			TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`
+			Source        TypeCredentialsSource `yaml:"Source"`
 		}{
 			URL:           "http://localhost/DBCredentials",
 			User:          "",
 			Password:      "",
 			TLSSkipVerify: true,
+			Source:        CredentialsSourceExternal, // явно указываем режим external
 		},
 	}
 
 	logger.InitLogger(s.LogDir, 4)
 
-	p := gomonkey.ApplyMethod(reflect.TypeOf(new(http.Client)), "Do", func(_ *http.Client, req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewReader([]byte(`[{"Name":"hrmcorp-n17","UserName":"testUser","UserPass":"***"}]`))),
-		}, nil
-	})
-	defer p.Reset()
-
-	// из-за переопределенного транспорта не могу мок использовать
-	// httpmock.RegisterResponder(http.MethodGet, "http://localhost/DBCredentials", httpmock.NewStringResponder(200, `[{"Name":"hrmcorp-n17","UserName":"testUser","UserPass":"***"}]`))
-
 	ctx, cancel := context.WithCancel(context.Background())
 	go s.GetDBCredentials(ctx, make(chan struct{}))
 
-	time.Sleep(time.Millisecond * 500)
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 
 	assert.Equal(t, 1, len(s.bases))
-	if !t.Failed() {
-		assert.Equal(t, "hrmcorp-n17", s.bases[0].Name)
-		assert.Equal(t, "testUser", s.bases[0].UserName)
-		assert.Equal(t, "***", s.bases[0].UserPass)
-	}
+	assert.Equal(t, "hrmcorp-n17", s.bases[0].Name)
+	assert.Equal(t, "testUser", s.bases[0].UserName)
+	assert.Equal(t, "***", s.bases[0].UserPass)
 }
 
 func Test_LoadSettings(t *testing.T) {
@@ -220,4 +209,112 @@ func Test_SetBinaryPath(t *testing.T) {
 	s.WinSW.ConfigFile = "../examples_winsw.xml"
 	assert.Nil(t, s.SetBinaryPath("https://host/new.exe"))
 
+}
+
+// TestGetLogPass_InternalMode проверяет получение учётных данных из секретов.
+func TestGetLogPass_InternalMode(t *testing.T) {
+	s := &Settings{
+		DBCredentials: &struct {
+			URL           string                `yaml:"URL"`
+			User          string                `yaml:"User"`
+			Password      string                `yaml:"Password"`
+			TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`
+			Source        TypeCredentialsSource `yaml:"Source"`
+		}{
+			Source: CredentialsSourceInternal,
+		},
+		secrets: &IBCredentials{
+			IbaseDefault: &IBCred{Login: "defaultLogin", Password: "defaultPass"},
+			Ibases: map[string]IBCred{
+				"testDb": {Login: "testLogin", Password: "testPass"},
+			},
+		},
+	}
+
+	// Конкретная база
+	login, pass := s.GetLogPass("testDb")
+	assert.Equal(t, "testLogin", login)
+	assert.Equal(t, "testPass", pass)
+
+	// База по умолчанию
+	login, pass = s.GetLogPass("unknown")
+	assert.Equal(t, "defaultLogin", login)
+	assert.Equal(t, "defaultPass", pass)
+
+	// Без секретов
+	s.secrets = nil
+	login, pass = s.GetLogPass("any")
+	assert.Equal(t, "", login)
+	assert.Equal(t, "", pass)
+}
+
+// TestGetLogPass_ExternalMode проверяет получение учётных данных из внешнего источника (bases).
+func TestGetLogPass_ExternalMode(t *testing.T) {
+	s := &Settings{
+		DBCredentials: &struct {
+			URL           string                `yaml:"URL"`
+			User          string                `yaml:"User"`
+			Password      string                `yaml:"Password"`
+			TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`
+			Source        TypeCredentialsSource `yaml:"Source"`
+		}{
+			Source: CredentialsSourceExternal,
+		},
+		mx: new(sync.RWMutex),
+		bases: []InfobaseCredentials{
+			{Name: "db1", UserName: "extUser", UserPass: "extPass"},
+		},
+	}
+
+	login, pass := s.GetLogPass("db1")
+	assert.Equal(t, "extUser", login)
+	assert.Equal(t, "extPass", pass)
+
+	login, pass = s.GetLogPass("missing")
+	assert.Equal(t, "", login)
+	assert.Equal(t, "", pass)
+}
+
+// TestRAC_LoginPass_Priority проверяет, что учётные данные RAS берутся из секретов в режиме internal,
+// а иначе – из конфигурации.
+func TestRAC_LoginPass_Priority(t *testing.T) {
+	s := &Settings{
+		RAC: &struct {
+			Path  string `yaml:"Path"`
+			Port  string `yaml:"Port"`
+			Host  string `yaml:"Host"`
+			Login string `yaml:"Login"`
+			Pass  string `yaml:"Pass"`
+		}{
+			Login: "configLogin",
+			Pass:  "configPass",
+		},
+		DBCredentials: &struct {
+			URL           string                `yaml:"URL"`
+			User          string                `yaml:"User"`
+			Password      string                `yaml:"Password"`
+			TLSSkipVerify bool                  `yaml:"TLSSkipVerify"`
+			Source        TypeCredentialsSource `yaml:"Source"`
+		}{
+			Source: CredentialsSourceInternal,
+		},
+		secrets: &IBCredentials{
+			RAS: &IBCred{Login: "secretLogin", Password: "secretPass"},
+		},
+	}
+
+	// Внутренний режим – берём из секретов
+	assert.Equal(t, "secretLogin", s.RAC_Login())
+	assert.Equal(t, "secretPass", s.RAC_Pass())
+
+	// Переключаем на внешний режим – должны использоваться значения из конфига
+	s.DBCredentials.Source = CredentialsSourceExternal
+	assert.Equal(t, "configLogin", s.RAC_Login())
+	assert.Equal(t, "configPass", s.RAC_Pass())
+
+	// Внутренний, но секретов нет – используем конфиг
+	s.DBCredentials.Source = CredentialsSourceInternal
+	s.secrets = nil
+	assert.Equal(t, "configLogin", s.RAC_Login())
+	assert.Equal(t, "configPass", s.RAC_Pass())
 }
