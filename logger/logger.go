@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"go.uber.org/zap"
@@ -50,19 +50,19 @@ func InitLogger(logDir string, ll int) {
 	SetLevel(ll)
 }
 
-func defaultLogPath() string {
-	if runtime.GOOS == "windows" {
-		programData := os.Getenv("ProgramData")
-		if programData != "" {
-			return filepath.Join(programData, "Prometheus1CExporter", "logs", defaultLogFilename)
-		}
-		// fallback: папка logs рядом с исполняемым файлом
-		exe, _ := os.Executable()
-		return filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
-	}
-	// Linux / Unix
-	return filepath.Join("/var/log/1c_exporter", defaultLogFilename)
-}
+// func defaultLogPath() string {
+// 	if runtime.GOOS == "windows" {
+// 		programData := os.Getenv("ProgramData")
+// 		if programData != "" {
+// 			return filepath.Join(programData, "Prometheus1CExporter", defaultLogDir, defaultLogFilename)
+// 		}
+// 		// fallback: папка logs рядом с исполняемым файлом
+// 		exe, _ := os.Executable()
+// 		return filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
+// 	}
+// 	// Linux / Unix
+// 	return filepath.Join("/var/log/1c_exporter", defaultLogFilename)
+// }
 
 func newLogger(logDir string) *zap.SugaredLogger {
 	var logWriter io.Writer
@@ -72,23 +72,18 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		currentLogFile = "stdout"
 	} else {
 		var logPath string
+		logPath = logDir
 		if logDir == "" {
-			// не задан – используем системный путь по умолчанию
-			logPath = defaultLogPath()
-		} else {
-			// задан – используем указанный путь как директорию (без добавления подпапки logs)
-			logPath = filepath.Join(logDir, defaultLogFilename)
+			logPath = defaultLogDir
 		}
-		currentLogFile = logPath
+		currentLogFile = path.Join(logPath, defaultLogFilename)
 
-		dir := filepath.Dir(logPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			// Не удалось создать папку – пишем в stdout
+		if err := os.MkdirAll(logPath, 0755); err != nil {
 			logWriter = os.Stdout
 			currentLogFile = "stdout"
 		} else {
 			logWriter = &lumberjack.Logger{
-				Filename:   logPath,
+				Filename:   currentLogFile,
 				MaxSize:    10,
 				MaxBackups: 10,
 				MaxAge:     5,
