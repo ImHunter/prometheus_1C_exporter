@@ -45,7 +45,7 @@ func init() {
 }
 
 func InitLogger(logDir string, ll int) {
-	DefaultLogger = newLogger(filepath.Join(logDir, defaultLogDir))
+	DefaultLogger = newLogger(logDir) // передаём исходный logDir без изменений
 	SetLevel(ll)
 }
 
