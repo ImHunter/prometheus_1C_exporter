@@ -38,32 +38,12 @@ var (
 	currentLogFile string
 )
 
-func init() {
-	atom = zap.NewAtomicLevel()
-	NopLogger = newNopLogger()
-}
-
 func InitLogger(logDir string, ll int) {
-	// Временная отладка
-	debugFile := "C:\\works\\logger_debug.txt"
-	f, err := os.OpenFile(debugFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err == nil {
-		fmt.Fprintf(f, "InitLogger called with logDir: %q\n", logDir)
-		f.Close()
-	}
-
 	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
 	SetLevel(ll)
 }
 
 func newLogger(logDir string) *zap.SugaredLogger {
-
-	debugFile := "C:\\works\\logger_debug.txt"
-	f, err := os.OpenFile(debugFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err == nil {
-		fmt.Fprintf(f, "newLogger called with logDir: %q\n", logDir)
-		f.Close()
-	}
 
 	var logWriter io.Writer
 
