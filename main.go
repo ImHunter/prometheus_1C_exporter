@@ -61,7 +61,10 @@ func main() {
 		if err != nil {
 			logger.Errorf("Auto-update failed: %v", err)
 		} else if updated {
+			logger.Warn("Restarting for auto-update")
 			os.Exit(1)
+		} else {
+			logger.Info("Self-updated")
 		}
 	}
 
