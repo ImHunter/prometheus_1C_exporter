@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
@@ -42,27 +41,12 @@ var (
 func init() {
 	atom = zap.NewAtomicLevel()
 	NopLogger = newNopLogger()
-	DefaultLogger = newLogger(filepath.Join("", defaultLogDir))
 }
 
 func InitLogger(logDir string, ll int) {
 	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
 	SetLevel(ll)
 }
-
-// func defaultLogPath() string {
-// 	if runtime.GOOS == "windows" {
-// 		programData := os.Getenv("ProgramData")
-// 		if programData != "" {
-// 			return filepath.Join(programData, "Prometheus1CExporter", defaultLogDir, defaultLogFilename)
-// 		}
-// 		// fallback: папка logs рядом с исполняемым файлом
-// 		exe, _ := os.Executable()
-// 		return filepath.Join(filepath.Dir(exe), defaultLogDir, defaultLogFilename)
-// 	}
-// 	// Linux / Unix
-// 	return filepath.Join("/var/log/1c_exporter", defaultLogFilename)
-// }
 
 func newLogger(logDir string) *zap.SugaredLogger {
 	var logWriter io.Writer
@@ -71,9 +55,8 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		logWriter = os.Stdout
 		currentLogFile = "stdout"
 	} else {
-		var logPath string
-		logPath = logDir
-		if logDir == "" {
+		logPath := logDir
+		if logPath == "" {
 			logPath = defaultLogDir
 		}
 		currentLogFile = path.Join(logPath, defaultLogFilename)
