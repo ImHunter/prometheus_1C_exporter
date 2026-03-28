@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"strings"
 
 	"go.uber.org/zap"
@@ -44,11 +44,27 @@ func init() {
 }
 
 func InitLogger(logDir string, ll int) {
+	// Временная отладка
+	debugFile := "C:\\works\\logger_debug.txt"
+	f, err := os.OpenFile(debugFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err == nil {
+		fmt.Fprintf(f, "InitLogger called with logDir: %q\n", logDir)
+		f.Close()
+	}
+
 	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
 	SetLevel(ll)
 }
 
 func newLogger(logDir string) *zap.SugaredLogger {
+
+	debugFile := "C:\\works\\logger_debug.txt"
+	f, err := os.OpenFile(debugFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err == nil {
+		fmt.Fprintf(f, "newLogger called with logDir: %q\n", logDir)
+		f.Close()
+	}
+
 	var logWriter io.Writer
 
 	if isTesting() {
@@ -59,7 +75,7 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		if logPath == "" {
 			logPath = defaultLogDir
 		}
-		currentLogFile = path.Join(logPath, defaultLogFilename)
+		currentLogFile = filepath.Join(logPath, defaultLogFilename)
 
 		if err := os.MkdirAll(logPath, 0755); err != nil {
 			logWriter = os.Stdout
