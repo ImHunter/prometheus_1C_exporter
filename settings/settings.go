@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
-	"github.com/beevik/etree"
 	"github.com/creasty/defaults"
 	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
@@ -81,10 +80,6 @@ type Settings struct {
 		UseExemplars              bool   `yaml:"UseExemplars" default:"false"`
 		DisableMetricsCompression bool   `yaml:"DisableMetricsCompression" default:"false"`
 	} `yaml:"Other"`
-
-	WinSW *struct {
-		ConfigFile string `yaml:"ConfigFile"`
-	} `yaml:"WinSW"`
 
 	mx    *sync.RWMutex         `yaml:"-"`
 	bases []InfobaseCredentials `yaml:"-"`
@@ -315,33 +310,6 @@ func (s *Settings) GetExporters() map[string]map[string]interface{} {
 	}
 
 	return result
-}
-
-func (s *Settings) SetBinaryPath(newBinaryPath string) error {
-
-	if s.WinSW == nil || s.WinSW.ConfigFile == "" {
-		return errors.New("Не задан конфигурационный файл WinSW")
-	}
-	if newBinaryPath == "" {
-		return errors.New("Не задан путь загружаемого файла для записи в конфигурационный файл WinSW")
-	}
-	winsw := s.WinSW.ConfigFile
-
-	doc := etree.NewDocument()
-	if err := doc.ReadFromFile(winsw); err != nil {
-		return err
-	}
-
-	ename := "//service/onfailure/download"
-	element := doc.FindElement(ename)
-	if element == nil {
-		return errors.Errorf("Элемент %s не найден", ename)
-	}
-
-	element.CreateAttr("from", newBinaryPath)
-	err := doc.WriteToFile(winsw)
-
-	return err
 }
 
 func request(url, log, pass string, tlsConf *tls.Config) ([]byte, error) {

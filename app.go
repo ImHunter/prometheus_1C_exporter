@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -265,7 +264,6 @@ func (a *app) initHTTP() {
 	siteMux.HandleFunc("GET /config/get", a.getConfigHandler)
 
 	// Управление
-	siteMux.HandleFunc("POST /set_binarypath", a.setBinaryPath)
 	siteMux.HandleFunc("POST /shutdown_emulate", a.crash)
 
 	// Информация
@@ -360,40 +358,6 @@ func (a *app) getConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 // ----- Управление -----
 
-func (a *app) setBinaryPath(w http.ResponseWriter, r *http.Request) {
-	logger.DefaultLogger.Info("Начинаем обработку метода /set_binarypath")
-
-	if r.Method != "POST" {
-		w.WriteHeader(405)
-		logger.DefaultLogger.Error("Требуется использование метода POST")
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(400)
-		logger.DefaultLogger.Error("Ошибка чтения тела запроса: " + err.Error())
-		return
-	}
-	defer r.Body.Close()
-
-	binaryPath := string(bytes.TrimSpace(body))
-	if binaryPath == "" {
-		w.WriteHeader(400)
-		logger.DefaultLogger.Error("Пустое значение binaryPath")
-		return
-	}
-
-	err = a.settings.SetBinaryPath(binaryPath)
-	if err != nil {
-		w.WriteHeader(400)
-		logger.DefaultLogger.Error(err)
-		return
-	}
-	w.WriteHeader(201)
-	logger.DefaultLogger.Infof("BinaryPath успешно установлен: %s", binaryPath)
-}
-
 func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 	exitCodeStr := r.URL.Query().Get("exit_code")
 	exitCode := 1
@@ -440,7 +404,6 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 			{"path": "/config/set", "method": "POST", "description": "Загружает новый конфигурационный файл (multipart/form-data) и применяет его"},
 			{"path": "/config/get", "method": "GET", "description": "Возвращает текущий конфигурационный файл settings.yml"},
 			{"path": "/shutdown_emulate", "method": "POST", "description": "Аварийное завершение"},
-			{"path": "/set_binarypath", "method": "POST", "description": "Установка источника скачивания бинарного файла, при использовании WinSW"},
 			{"path": "/log", "method": "GET", "description": "Читает содержимое лога: с начала, с конца или с произвольного места"},
 			{"path": "/secrets", "method": "GET", "description": "Информация о загруженных секретах (метаданные, список баз, время обновления)"},
 			{"path": "/secrets/set", "method": "POST", "description": "Принимает зашифрованные секреты (бинарные данные)"},

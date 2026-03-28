@@ -103,8 +103,7 @@ scrape_configs:
 | GET | `/config/get` | – | Возвращает текущий конфигурационный файл `settings.yml` |
 | POST | `/config/set` | `file` (multipart/form-data) | Загружает новый конфигурационный файл (`settings.yml`) и применяет его без перезапуска |
 | GET | `/debug/pprof/*` | – | Стандартные эндпоинты для профилирования Go |
-| POST | `/set_binarypath` | тело запроса содержит URL | Устанавливает новый путь к бинарному файлу в конфигурации WinSW (используется для обновления) |
-| POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода (для триггера перезапуска WinSW) |
+| POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода |
 | GET | `/secrets` | – | Информация о загруженных секретах (наличие, список баз, время обновления) |
 | GET | `/secrets/pub_key` | – | Возвращает публичный ключ RSA в формате PEM |
 | POST | `/secrets/set` | бинарные данные | Принимает зашифрованные секреты (JSON-пакет), расшифровывает и сохраняет их |
@@ -174,11 +173,6 @@ scrape_configs:
 - **Получение текущего конфигурационного файла**
   ```bash
   curl http://localhost:9091/config/get --output settings.yml
-  ```
-
-- **Установка нового пути к бинарнику** (для обновления через WinSW)
-  ```bash
-  curl -X POST http://localhost:9091/set_binarypath -H "Content-Type: text/plain" --data "https://gitlab.example.com/path/to/new/exporter.exe"
   ```
 
 - **Эмуляция аварийного завершения**
