@@ -8,8 +8,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
@@ -56,9 +58,9 @@ func main() {
 	logger.InitLogger(s.LogDir, s.LogLevel)
 	logger.Infof("Версия: %q, gitCommit: %q", version, gitCommit)
 
-	if id, ok := s.GetReleasesProjectID(); ok {
-		logger.Infof("Auto-update: found project ID %d, checking for updates", id)
-		updated, err := checkAndUpdate(id, version)
+	if s.GitlabConfigured() {
+		logger.Info("Auto-update: checking for updates")
+		updated, err := checkAndUpdate(s, version)
 		if err != nil {
 			logger.Errorf("Auto-update failed: %v", err)
 		} else if updated {
@@ -68,7 +70,7 @@ func main() {
 			logger.Info("Auto-update: already up to date")
 		}
 	} else {
-		logger.Info("Auto-update: not configured (ReleasesProjectID missing or zero)")
+		logger.Info("Auto-update: not configured (GitLab.ProjectURL missing)")
 	}
 
 	if err := svc.Run(&app{settings: s, port: port}); err != nil {
@@ -77,13 +79,33 @@ func main() {
 	}
 }
 
-func checkAndUpdate(projectID int, currentVersion string) (bool, error) {
+func checkAndUpdate(settings *settings.Settings, currentVersion string) (bool, error) {
 	if currentVersion == "dev" {
 		logger.DefaultLogger.Warnln("Development version, skipping auto-update")
 		return false, nil
 	}
 
-	repo := selfupdate.NewRepositoryID(projectID)
+	slug, err := settings.GetProjectSlug()
+	if err != nil {
+		return false, fmt.Errorf("get project slug: %w", err)
+	}
+
+	// Разделяем slug на владельца и имя репозитория
+	parts := strings.SplitN(slug, "/", 2)
+	if len(parts) != 2 {
+		return false, fmt.Errorf("invalid slug format: %s", slug)
+	}
+	owner, repoName := parts[0], parts[1]
+
+	// Временно подменяем глобальный транспорт для авторизации в GitLab
+	var origTransport http.RoundTripper
+	if settings.GitLab != nil && settings.GitLab.AccessToken != "" {
+		origTransport = http.DefaultTransport
+		http.DefaultTransport = &tokenTransport{token: settings.GitLab.AccessToken, base: origTransport}
+		defer func() { http.DefaultTransport = origTransport }()
+	}
+
+	repo := selfupdate.NewRepositorySlug(owner, repoName)
 
 	assetName := fmt.Sprintf("1C_exporter_%s_%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
@@ -99,7 +121,11 @@ func checkAndUpdate(projectID int, currentVersion string) (bool, error) {
 		return false, nil
 	}
 
-	// Парсим текущую версию и версию из релиза
+	if latest.AssetName != assetName {
+		logger.Infof("Expected asset %q, found %q. Skipping update.", assetName, latest.AssetName)
+		return false, nil
+	}
+
 	cur, err := semver.NewVersion(currentVersion)
 	if err != nil {
 		return false, fmt.Errorf("parse current version: %w", err)
@@ -121,6 +147,7 @@ func checkAndUpdate(projectID int, currentVersion string) (bool, error) {
 		return false, fmt.Errorf("get executable path: %w", err)
 	}
 
+	// Обновление: порядок аргументов (ctx, assetURL, assetName, cmdPath)
 	err = selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exe)
 	if err != nil {
 		return false, fmt.Errorf("update: %w", err)
@@ -128,6 +155,28 @@ func checkAndUpdate(projectID int, currentVersion string) (bool, error) {
 
 	logger.DefaultLogger.Infoln("Update successful, exiting for restart")
 	return true, nil
+}
+
+type tokenRequester struct {
+	token string
+}
+
+func (r *tokenRequester) Do(req *http.Request) (*http.Response, error) {
+	req.Header.Set("PRIVATE-TOKEN", r.token)
+	return http.DefaultClient.Do(req)
+}
+
+type tokenTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.base == nil {
+		t.base = http.DefaultTransport
+	}
+	req.Header.Set("PRIVATE-TOKEN", t.token)
+	return t.base.RoundTrip(req)
 }
 
 // add info

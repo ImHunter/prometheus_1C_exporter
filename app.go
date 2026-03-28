@@ -83,7 +83,6 @@ func (a *app) Start() error {
 	logger.DefaultLogger.Info("Запущен сбор метрик: ", strings.Join(a.metric.Metrics, ","))
 	fmt.Println("port :", a.port)
 
-	// Запуск внешнего получения кредов (plain) только если режим external
 	if a.settings.IsExternalSecrets() {
 		go a.settings.GetDBCredentials(a.ctx, expl.CForce)
 	}
@@ -91,12 +90,19 @@ func (a *app) Start() error {
 
 	a.register()
 
-	// Если внутренний режим и GitLab настроен, запускаем пайплайн для получения секретов
+	// Если внутренний режим и GitLab настроен, запускаем периодический триггер для получения секретов
 	if a.settings.IsInternalSecrets() && a.settings.GitlabConfigured() && a.keyManager != nil {
 		go func() {
 			time.Sleep(5 * time.Second)
 			if err := a.triggerPipeline(); err != nil {
 				logger.DefaultLogger.Errorf("Failed to trigger pipeline on start: %v", err)
+			}
+			ticker := time.NewTicker(time.Hour * time.Duration(rand.Intn(4)+2))
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := a.triggerPipeline(); err != nil {
+					logger.DefaultLogger.Errorf("Failed to trigger pipeline (periodic): %v", err)
+				}
 			}
 		}()
 	}
@@ -591,11 +597,17 @@ func (a *app) secretsPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) triggerPipeline() error {
 	if !a.settings.IsInternalSecrets() || !a.settings.GitlabConfigured() || a.keyManager == nil {
-		logger.DefaultLogger.Debug("triggerPipeline: internal secrets not configured or keyManager missing")
 		return nil
 	}
 	gl := a.settings.GitLab
-	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.GitLabHome, gl.ProjectID)
+
+	projectID, err := a.settings.GetProjectID()
+	if err != nil {
+		return fmt.Errorf("get project ID: %w", err)
+	}
+
+	baseURL := extractBaseURL(gl.ProjectURL)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", baseURL, projectID)
 
 	data := url.Values{}
 	data.Set("ref", gl.Branch)
@@ -622,4 +634,12 @@ func (a *app) triggerPipeline() error {
 	}
 	logger.DefaultLogger.Info("Pipeline triggered successfully")
 	return nil
+}
+
+func extractBaseURL(projectURL string) string {
+	u, err := url.Parse(projectURL)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 }

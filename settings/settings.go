@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/creasty/defaults"
 	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -95,11 +97,14 @@ type InfobaseCredentials struct {
 
 // GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	GitLabHome  string `yaml:"GitLabHome"`            // базовый URL GitLab, например "https://gitlab.example.com"
-	ProjectID   int    `yaml:"ProjectID"`             // ID проекта для API
+	ProjectURL  string `yaml:"ProjectURL"`            // Например, "https://gitlab.example.com/namespace/project"
 	Branch      string `yaml:"Branch"`                // ветка для триггера
 	SecretsFile string `yaml:"SecretsFile"`           // имя файла секретов (по умолчанию "secrets.json.enc")
 	AccessToken string `yaml:"AccessToken,omitempty"` // Personal Access Token с правами api (для всех операций)
+
+	// кэш projectID и мьютекс
+	projectID   int64
+	projectIDMu sync.RWMutex
 }
 
 // Структуры для секретов
@@ -366,12 +371,80 @@ func (s *Settings) GetSecretsInfo() (hasSecrets, hasDefault, hasRas bool, bases 
 	return hasSecrets, hasDefault, hasRas, bases, s.secretsLastUpdated
 }
 
+// GetProjectSlug возвращает namespace/project из ProjectURL
+func (s *Settings) GetProjectSlug() (string, error) {
+	if s.GitLab == nil || s.GitLab.ProjectURL == "" {
+		return "", errors.New("GitLab ProjectURL not set")
+	}
+	u, err := url.Parse(s.GitLab.ProjectURL)
+	if err != nil {
+		return "", errors.Wrap(err, "invalid ProjectURL")
+	}
+	path := strings.TrimPrefix(u.Path, "/")
+	if path == "" {
+		return "", errors.New("cannot extract namespace/project from URL")
+	}
+	return path, nil
+}
+
+// GetGitLabClient возвращает клиент GitLab
+func (s *Settings) GetGitLabClient() (*gitlab.Client, error) {
+	if s.GitLab == nil || s.GitLab.ProjectURL == "" {
+		return nil, errors.New("GitLab not configured")
+	}
+	u, err := url.Parse(s.GitLab.ProjectURL)
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid ProjectURL")
+	}
+	baseURL := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+	client, err := gitlab.NewClient(s.GitLab.AccessToken, gitlab.WithBaseURL(baseURL))
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// GetProjectID получает числовой ID проекта (с кэшированием)
+func (s *Settings) GetProjectID() (int, error) {
+	if s.GitLab == nil {
+		return 0, errors.New("GitLab not configured")
+	}
+
+	s.GitLab.projectIDMu.RLock()
+	if s.GitLab.projectID != 0 {
+		defer s.GitLab.projectIDMu.RUnlock()
+		return int(s.GitLab.projectID), nil
+	}
+	s.GitLab.projectIDMu.RUnlock()
+
+	slug, err := s.GetProjectSlug()
+	if err != nil {
+		return 0, err
+	}
+
+	client, err := s.GetGitLabClient()
+	if err != nil {
+		return 0, err
+	}
+
+	project, _, err := client.Projects.GetProject(slug, nil)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to get project %s", slug)
+	}
+
+	s.GitLab.projectIDMu.Lock()
+	s.GitLab.projectID = project.ID // int64
+	s.GitLab.projectIDMu.Unlock()
+
+	return int(project.ID), nil
+}
+
 // GitlabConfigured проверяет, заполнены ли настройки GitLab (независимо от режима)
 func (s *Settings) GitlabConfigured() bool {
 	if s.GitLab == nil {
 		return false
 	}
-	return s.GitLab.GitLabHome != "" && s.GitLab.ProjectID != 0 && s.GitLab.Branch != "" && s.GitLab.AccessToken != ""
+	return s.GitLab.ProjectURL != "" && s.GitLab.Branch != "" && s.GitLab.AccessToken != ""
 }
 
 // IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов
@@ -404,14 +477,4 @@ func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) 
 		return c.IbaseDefault.Login, c.IbaseDefault.Password, true
 	}
 	return "", "", false
-}
-
-// GetReleasesProjectID возвращает ID проекта GitLab для самообновления,
-// а также флаг, указывающий, задан ли он ( > 0 ).
-// Берется из ProjectID. Но вдруг захотим вести в разных проектах.
-func (s *Settings) GetReleasesProjectID() (int, bool) {
-	if s.GitLab == nil || s.GitLab.ProjectID <= 0 {
-		return 0, false
-	}
-	return s.GitLab.ProjectID, true
 }
