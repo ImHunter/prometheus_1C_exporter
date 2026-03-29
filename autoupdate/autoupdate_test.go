@@ -7,6 +7,9 @@ import (
 	"testing"
 )
 
+// ----------------------------------------------------------------------------
+// extractProjectSlug
+// ----------------------------------------------------------------------------
 func Test_extractProjectSlug(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -14,15 +17,62 @@ func Test_extractProjectSlug(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"empty URL", "", "", true},
-		{"simple", "https://gitlab.example.com/namespace/project", "namespace/project", false},
-		{"trailing slash", "https://gitlab.example.com/namespace/project/", "namespace/project", false},
-		{"with .git", "https://gitlab.example.com/namespace/project.git", "namespace/project", false},
-		{".git and slash", "https://gitlab.example.com/namespace/project.git/", "namespace/project", false},
-		{"extra path", "https://gitlab.example.com/namespace/project/-/tree/main", "namespace/project/-/tree/main", false},
-		{"invalid URL", "://invalid", "", true},
-		{"no path", "https://gitlab.example.com/", "", true},
+		{
+			name:    "empty URL",
+			url:     "",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "simple URL",
+			url:     "https://gitlab.example.com/namespace/project",
+			want:    "namespace/project",
+			wantErr: false,
+		},
+		{
+			name:    "URL with trailing slash",
+			url:     "https://gitlab.example.com/namespace/project/",
+			want:    "namespace/project",
+			wantErr: false,
+		},
+		{
+			name:    "URL with .git",
+			url:     "https://gitlab.example.com/namespace/project.git",
+			want:    "namespace/project",
+			wantErr: false,
+		},
+		{
+			name:    "URL with .git and trailing slash",
+			url:     "https://gitlab.example.com/namespace/project.git/",
+			want:    "namespace/project",
+			wantErr: false,
+		},
+		{
+			name:    "nested path",
+			url:     "https://gitlab.example.com/devops/exporters/1c_exporter_config",
+			want:    "devops/exporters/1c_exporter_config",
+			wantErr: false,
+		},
+		{
+			name:    "extra path segments (/-/tree/main)",
+			url:     "https://gitlab.example.com/namespace/project/-/tree/main",
+			want:    "namespace/project/-/tree/main",
+			wantErr: false,
+		},
+		{
+			name:    "invalid URL",
+			url:     "://invalid",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "no project path",
+			url:     "https://gitlab.example.com/",
+			want:    "",
+			wantErr: true,
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := extractProjectSlug(tt.url)
@@ -31,12 +81,15 @@ func Test_extractProjectSlug(t *testing.T) {
 				return
 			}
 			if got != tt.want {
-				t.Errorf("extractProjectSlug() = %v, want %v", got, tt.want)
+				t.Errorf("extractProjectSlug() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
+// ----------------------------------------------------------------------------
+// splitSlug
+// ----------------------------------------------------------------------------
 func Test_splitSlug(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -45,11 +98,36 @@ func Test_splitSlug(t *testing.T) {
 		wantRepo  string
 		wantErr   bool
 	}{
-		{"valid", "namespace/project", "namespace", "project", false},
-		{"multi", "namespace/sub/project", "namespace", "sub/project", false},
-		{"empty", "", "", "", true},
-		{"no slash", "project", "", "", true},
+		{
+			name:      "valid",
+			slug:      "namespace/project",
+			wantOwner: "namespace",
+			wantRepo:  "project",
+			wantErr:   false,
+		},
+		{
+			name:      "nested",
+			slug:      "devops/exporters/1c_exporter_config",
+			wantOwner: "devops",
+			wantRepo:  "exporters/1c_exporter_config",
+			wantErr:   false,
+		},
+		{
+			name:      "empty slug",
+			slug:      "",
+			wantOwner: "",
+			wantRepo:  "",
+			wantErr:   true,
+		},
+		{
+			name:      "no slash",
+			slug:      "project",
+			wantOwner: "",
+			wantRepo:  "",
+			wantErr:   true,
+		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			owner, repo, err := splitSlug(tt.slug)
@@ -58,15 +136,158 @@ func Test_splitSlug(t *testing.T) {
 				return
 			}
 			if owner != tt.wantOwner {
-				t.Errorf("owner = %v, want %v", owner, tt.wantOwner)
+				t.Errorf("owner = %q, want %q", owner, tt.wantOwner)
 			}
 			if repo != tt.wantRepo {
-				t.Errorf("repo = %v, want %v", repo, tt.wantRepo)
+				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
 			}
 		})
 	}
 }
 
+// ----------------------------------------------------------------------------
+// extractBaseURL
+// ----------------------------------------------------------------------------
+func Test_extractBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "empty URL",
+			url:     "",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "simple HTTPS",
+			url:     "https://gitlab.example.com/namespace/project",
+			want:    "https://gitlab.example.com",
+			wantErr: false,
+		},
+		{
+			name:    "with .git",
+			url:     "https://gitlab.example.com/namespace/project.git",
+			want:    "https://gitlab.example.com",
+			wantErr: false,
+		},
+		{
+			name:    "trailing slash",
+			url:     "https://gitlab.example.com/namespace/project/",
+			want:    "https://gitlab.example.com",
+			wantErr: false,
+		},
+		{
+			name:    "HTTP with port",
+			url:     "http://localhost:8080/group/project",
+			want:    "http://localhost:8080",
+			wantErr: false,
+		},
+		{
+			name:    "invalid URL",
+			url:     "://invalid",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "missing scheme",
+			url:     "gitlab.example.com/namespace/project",
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractBaseURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractBaseURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("extractBaseURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// extractOwnerRepo (integration)
+// ----------------------------------------------------------------------------
+func Test_extractOwnerRepo(t *testing.T) {
+	tests := []struct {
+		name      string
+		url       string
+		wantOwner string
+		wantRepo  string
+		wantErr   bool
+	}{
+		{
+			name:      "simple",
+			url:       "https://gitlab.example.com/namespace/project",
+			wantOwner: "namespace",
+			wantRepo:  "project",
+			wantErr:   false,
+		},
+		{
+			name:      "nested",
+			url:       "https://gitlab.example.com/devops/exporters/1c_exporter_config",
+			wantOwner: "devops",
+			wantRepo:  "exporters/1c_exporter_config",
+			wantErr:   false,
+		},
+		{
+			name:      "with .git",
+			url:       "https://gitlab.example.com/group/subgroup/repo.git",
+			wantOwner: "group",
+			wantRepo:  "subgroup/repo",
+			wantErr:   false,
+		},
+		{
+			name:      "trailing slash",
+			url:       "https://gitlab.example.com/namespace/project/",
+			wantOwner: "namespace",
+			wantRepo:  "project",
+			wantErr:   false,
+		},
+		{
+			name:      "invalid URL",
+			url:       "://invalid",
+			wantOwner: "",
+			wantRepo:  "",
+			wantErr:   true,
+		},
+		{
+			name:      "no path",
+			url:       "https://gitlab.example.com/",
+			wantOwner: "",
+			wantRepo:  "",
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, repo, err := extractOwnerRepo(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("extractOwnerRepo() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if owner != tt.wantOwner {
+				t.Errorf("owner = %q, want %q", owner, tt.wantOwner)
+			}
+			if repo != tt.wantRepo {
+				t.Errorf("repo = %q, want %q", repo, tt.wantRepo)
+			}
+		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// compareVersions
+// ----------------------------------------------------------------------------
 func Test_compareVersions(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -78,9 +299,10 @@ func Test_compareVersions(t *testing.T) {
 		{"newer", "1.0.0", "1.0.1", true, false},
 		{"same", "1.0.0", "1.0.0", false, false},
 		{"older", "1.0.1", "1.0.0", false, false},
-		{"invalid current", "invalid", "1.0.0", false, true},
-		{"invalid latest", "1.0.0", "invalid", false, true},
+		{"current invalid", "invalid", "1.0.0", false, true},
+		{"latest invalid", "1.0.0", "invalid", false, true},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := compareVersions(tt.current, tt.latest)
@@ -95,19 +317,25 @@ func Test_compareVersions(t *testing.T) {
 	}
 }
 
+// ----------------------------------------------------------------------------
+// buildAssetName
+// ----------------------------------------------------------------------------
 func Test_buildAssetName(t *testing.T) {
 	asset := buildAssetName()
 	if asset == "" {
-		t.Error("buildAssetName() returned empty")
+		t.Error("buildAssetName() returned empty string")
 	}
 	if runtime.GOOS == "windows" && !strings.HasSuffix(asset, ".exe") {
-		t.Errorf("on windows expected .exe, got %s", asset)
+		t.Errorf("on Windows expected .exe suffix, got %q", asset)
 	}
 	if runtime.GOOS != "windows" && strings.HasSuffix(asset, ".exe") {
-		t.Errorf("on non-windows .exe suffix, got %s", asset)
+		t.Errorf("on non-Windows unexpected .exe suffix, got %q", asset)
 	}
 }
 
+// ----------------------------------------------------------------------------
+// tokenTransport
+// ----------------------------------------------------------------------------
 type mockTransport struct {
 	RoundTripFunc func(req *http.Request) (*http.Response, error)
 }
@@ -119,39 +347,35 @@ func (m *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return nil, nil
 }
 
-func Test_createHTTPClient(t *testing.T) {
-	base := &mockTransport{}
+func Test_tokenTransport_RoundTrip(t *testing.T) {
 	tests := []struct {
 		name      string
 		token     string
-		wantToken bool
+		wantError bool
 	}{
-		{"with token", "glpat-123", true},
-		{"without token", "", false},
+		{"with token", "test-token-123", false},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := createHTTPClient(tt.token, base)
-			if client == nil {
-				t.Error("client is nil")
-				return
+			headerChecked := false
+			mockBase := &mockTransport{
+				RoundTripFunc: func(req *http.Request) (*http.Response, error) {
+					if req.Header.Get("PRIVATE-TOKEN") != tt.token {
+						t.Errorf("expected PRIVATE-TOKEN = %q, got %q", tt.token, req.Header.Get("PRIVATE-TOKEN"))
+					}
+					headerChecked = true
+					return nil, nil
+				},
 			}
-			if tt.wantToken {
-				tr, ok := client.Transport.(*tokenTransport)
-				if !ok {
-					t.Error("expected tokenTransport")
-				} else {
-					if tr.token != tt.token {
-						t.Errorf("token = %v, want %v", tr.token, tt.token)
-					}
-					if tr.base != base {
-						t.Error("base transport not set")
-					}
-				}
-			} else {
-				if client.Transport != base {
-					t.Error("expected base transport")
-				}
+			tr := &tokenTransport{token: tt.token, base: mockBase}
+			req, _ := http.NewRequest("GET", "http://example.com", nil)
+			_, err := tr.RoundTrip(req)
+			if (err != nil) != tt.wantError {
+				t.Errorf("RoundTrip() error = %v, wantError %v", err, tt.wantError)
+			}
+			if !headerChecked {
+				t.Error("RoundTrip() did not call base transport")
 			}
 		})
 	}

@@ -601,13 +601,12 @@ func (a *app) triggerPipeline() error {
 	}
 	gl := a.settings.GitLab
 
-	projectID, err := a.settings.GetProjectID()
-	if err != nil {
-		return fmt.Errorf("get project ID: %w", err)
+	// Используем явные поля: GitLabHome и ProjectID
+	if gl.GitLabHome == "" || gl.ProjectID == 0 {
+		return fmt.Errorf("GitLabHome or ProjectID not configured")
 	}
 
-	baseURL := extractBaseURL(gl.ProjectURL)
-	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", baseURL, projectID)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.GitLabHome, gl.ProjectID)
 
 	data := url.Values{}
 	data.Set("ref", gl.Branch)
@@ -634,12 +633,4 @@ func (a *app) triggerPipeline() error {
 	}
 	logger.DefaultLogger.Info("Pipeline triggered successfully")
 	return nil
-}
-
-func extractBaseURL(projectURL string) string {
-	u, err := url.Parse(projectURL)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%s://%s", u.Scheme, u.Host)
 }

@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"runtime"
-	"strings"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
@@ -15,49 +13,59 @@ import (
 )
 
 // CheckAndUpdate проверяет наличие новой версии в GitLab и обновляет бинарник.
-// Возвращает true, если обновление выполнено (требуется перезапуск), иначе false.
 func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, error) {
 	if currentVersion == "dev" {
 		logger.DefaultLogger.Warnln("Development version, skipping auto-update")
 		return false, nil
 	}
-
-	if cfg == nil || cfg.ProjectURL == "" {
-		return false, fmt.Errorf("GitLab settings or ProjectURL missing")
+	if cfg == nil {
+		return false, fmt.Errorf("GitLab settings missing")
+	}
+	if cfg.GitLabHome == "" || cfg.ProjectID == 0 {
+		return false, fmt.Errorf("GitLabHome or ProjectID not set")
 	}
 
-	slug, err := extractProjectSlug(cfg.ProjectURL)
+	// // Подмена глобального транспорта для авторизации (если есть токен)
+	// var restoreTransport func()
+	// if cfg.AccessToken != "" {
+	// 	origTransport := http.DefaultTransport
+	// 	http.DefaultTransport = &tokenTransport{token: cfg.AccessToken, base: origTransport}
+	// 	restoreTransport = func() { http.DefaultTransport = origTransport }
+	// 	defer restoreTransport()
+	// }
+
+	// Создаём GitLabSource с базовым URL
+	source, err := selfupdate.NewGitLabSource(selfupdate.GitLabConfig{
+		BaseURL:  cfg.GitLabHome,
+		APIToken: cfg.AccessToken,
+	})
 	if err != nil {
-		return false, fmt.Errorf("extract project slug: %w", err)
+		return false, fmt.Errorf("create GitLab source: %w", err)
 	}
 
-	owner, repo, err := splitSlug(slug)
+	updater, err := selfupdate.NewUpdater(selfupdate.Config{
+		Source:     source,
+		Prerelease: true,
+	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("create updater: %w", err)
 	}
 
-	// Сохраняем оригинальный транспорт
-	origTransport := http.DefaultTransport
-	client := createHTTPClient(cfg.AccessToken, origTransport)
+	// Используем числовой ID проекта
+	repository := selfupdate.NewRepositoryID(cfg.ProjectID)
+	logger.Infof("Checking for updates in GitLab project ID %d", cfg.ProjectID)
 
-	// Подменяем глобальный транспорт, если задан токен
-	if cfg.AccessToken != "" {
-		http.DefaultTransport = client.Transport
-		defer func() { http.DefaultTransport = origTransport }()
-	}
-
-	release, err := detectLatestRelease(context.Background(), owner, repo)
+	release, found, err := updater.DetectLatest(context.Background(), repository)
 	if err != nil {
 		return false, fmt.Errorf("detect latest release: %w", err)
 	}
-	if release == nil {
+	if !found {
 		logger.DefaultLogger.Infoln("No releases found")
 		return false, nil
 	}
 
-	expectedAssetName := buildAssetName()
-	if release.AssetName != expectedAssetName {
-		logger.Infof("Expected asset %q, found %q. Skipping update.", expectedAssetName, release.AssetName)
+	if !releaseAccepted(release) {
+		logger.Infof("Expected asset %q. Skipping update.", release.AssetName)
 		return false, nil
 	}
 
@@ -77,75 +85,17 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, fmt.Errorf("get executable path: %w", err)
 	}
 
-	if err := updateBinary(context.Background(), release, exePath); err != nil {
-		return false, fmt.Errorf("update: %w", err)
+	if err := updater.UpdateTo(context.Background(), release, exePath); err != nil {
+		return false, fmt.Errorf("update binary: %w", err)
 	}
 
 	logger.DefaultLogger.Infoln("Update successful, exiting for restart")
 	return true, nil
 }
 
-// extractProjectSlug извлекает "namespace/project" из URL GitLab.
-// Удаляет .git в конце и лишние слеши.
-func extractProjectSlug(rawURL string) (string, error) {
-	if rawURL == "" {
-		return "", fmt.Errorf("empty URL")
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-	path := strings.TrimPrefix(u.Path, "/")
-	path = strings.TrimSuffix(path, ".git")
-	path = strings.TrimSuffix(path, "/")
-	if path == "" {
-		return "", fmt.Errorf("cannot extract namespace/project from URL")
-	}
-	return path, nil
-}
-
-// splitSlug разделяет "namespace/project" на две части.
-func splitSlug(slug string) (owner, repo string, err error) {
-	parts := strings.SplitN(slug, "/", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid slug format: %s", slug)
-	}
-	return parts[0], parts[1], nil
-}
-
-// createHTTPClient создаёт HTTP клиент с добавлением заголовка PRIVATE-TOKEN.
-func createHTTPClient(token string, baseTransport http.RoundTripper) *http.Client {
-	if token == "" {
-		return &http.Client{Transport: baseTransport}
-	}
-	return &http.Client{
-		Transport: &tokenTransport{
-			token: token,
-			base:  baseTransport,
-		},
-	}
-}
-
-// detectLatestRelease получает последний релиз через selfupdate.
-func detectLatestRelease(ctx context.Context, owner, repo string) (*selfupdate.Release, error) {
-	repository := selfupdate.NewRepositorySlug(owner, repo)
-	release, found, err := selfupdate.DetectLatest(ctx, repository)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return nil, nil
-	}
-	return release, nil
-}
-
 // buildAssetName формирует имя бинарника для текущей платформы.
-func buildAssetName() string {
-	asset := fmt.Sprintf("1C_exporter_%s_%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		asset += ".exe"
-	}
-	return asset
+func releaseAccepted(r *selfupdate.Release) bool {
+	return r.Arch == runtime.GOARCH && r.OS == runtime.GOOS
 }
 
 // compareVersions сравнивает две версии, возвращает true, если latest > current.
@@ -159,11 +109,6 @@ func compareVersions(current, latest string) (bool, error) {
 		return false, fmt.Errorf("parse latest version: %w", err)
 	}
 	return lat.GreaterThan(cur), nil
-}
-
-// updateBinary заменяет текущий бинарник на новый.
-func updateBinary(ctx context.Context, release *selfupdate.Release, cmdPath string) error {
-	return selfupdate.UpdateTo(ctx, release.AssetURL, release.AssetName, cmdPath)
 }
 
 // tokenTransport добавляет заголовок авторизации к запросам.
