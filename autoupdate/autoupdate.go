@@ -14,16 +14,21 @@ import (
 	"github.com/creativeprojects/go-selfupdate"
 )
 
-// CheckAndUpdate выполняет проверку и обновление экспортера.
+// CheckAndUpdate проверяет наличие новой версии в GitLab и обновляет бинарник.
+// Возвращает true, если обновление выполнено (требуется перезапуск), иначе false.
 func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, error) {
 	if currentVersion == "dev" {
 		logger.DefaultLogger.Warnln("Development version, skipping auto-update")
 		return false, nil
 	}
 
-	slug, err := getProjectSlug(cfg)
+	if cfg == nil || cfg.ProjectURL == "" {
+		return false, fmt.Errorf("GitLab settings or ProjectURL missing")
+	}
+
+	slug, err := extractProjectSlug(cfg.ProjectURL)
 	if err != nil {
-		return false, fmt.Errorf("get project slug: %w", err)
+		return false, fmt.Errorf("extract project slug: %w", err)
 	}
 
 	owner, repo, err := splitSlug(slug)
@@ -31,11 +36,12 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, err
 	}
 
-	client := createHTTPClient(cfg.AccessToken)
+	// Сохраняем оригинальный транспорт
+	origTransport := http.DefaultTransport
+	client := createHTTPClient(cfg.AccessToken, origTransport)
 
-	var origTransport http.RoundTripper
+	// Подменяем глобальный транспорт, если задан токен
 	if cfg.AccessToken != "" {
-		origTransport = http.DefaultTransport
 		http.DefaultTransport = client.Transport
 		defer func() { http.DefaultTransport = origTransport }()
 	}
@@ -79,16 +85,19 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 	return true, nil
 }
 
-// getProjectSlug извлекает namespace/project из URL.
-func getProjectSlug(cfg *settings.GitLabSettings) (string, error) {
-	if cfg == nil || cfg.ProjectURL == "" {
-		return "", fmt.Errorf("GitLab ProjectURL not set")
+// extractProjectSlug извлекает "namespace/project" из URL GitLab.
+// Удаляет .git в конце и лишние слеши.
+func extractProjectSlug(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", fmt.Errorf("empty URL")
 	}
-	u, err := url.Parse(cfg.ProjectURL)
+	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid ProjectURL: %w", err)
+		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 	path := strings.TrimPrefix(u.Path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	path = strings.TrimSuffix(path, "/")
 	if path == "" {
 		return "", fmt.Errorf("cannot extract namespace/project from URL")
 	}
@@ -105,12 +114,15 @@ func splitSlug(slug string) (owner, repo string, err error) {
 }
 
 // createHTTPClient создаёт HTTP клиент с добавлением заголовка PRIVATE-TOKEN.
-func createHTTPClient(token string) *http.Client {
+func createHTTPClient(token string, baseTransport http.RoundTripper) *http.Client {
 	if token == "" {
-		return http.DefaultClient
+		return &http.Client{Transport: baseTransport}
 	}
 	return &http.Client{
-		Transport: &tokenTransport{token: token},
+		Transport: &tokenTransport{
+			token: token,
+			base:  baseTransport,
+		},
 	}
 }
 
@@ -161,9 +173,6 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.base == nil {
-		t.base = http.DefaultTransport
-	}
 	req.Header.Set("PRIVATE-TOKEN", t.token)
 	return t.base.RoundTrip(req)
 }

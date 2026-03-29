@@ -16,7 +16,8 @@ import (
 )
 
 var (
-	version   = "dev"
+	// version   = "dev"
+	version   = "1.5.1"
 	gitCommit = "undefined"
 )
 
