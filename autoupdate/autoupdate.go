@@ -3,8 +3,6 @@ package autoupdate
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"runtime"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
@@ -25,15 +23,6 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, fmt.Errorf("GitLabHome or ProjectID not set")
 	}
 
-	// // Подмена глобального транспорта для авторизации (если есть токен)
-	// var restoreTransport func()
-	// if cfg.AccessToken != "" {
-	// 	origTransport := http.DefaultTransport
-	// 	http.DefaultTransport = &tokenTransport{token: cfg.AccessToken, base: origTransport}
-	// 	restoreTransport = func() { http.DefaultTransport = origTransport }
-	// 	defer restoreTransport()
-	// }
-
 	// Создаём GitLabSource с базовым URL
 	source, err := selfupdate.NewGitLabSource(selfupdate.GitLabConfig{
 		BaseURL:  cfg.GitLabHome,
@@ -51,7 +40,6 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, fmt.Errorf("create updater: %w", err)
 	}
 
-	// Используем числовой ID проекта
 	repository := selfupdate.NewRepositoryID(cfg.ProjectID)
 	logger.Infof("Checking for updates in GitLab project ID %d", cfg.ProjectID)
 
@@ -61,11 +49,6 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 	}
 	if !found {
 		logger.DefaultLogger.Infoln("No releases found")
-		return false, nil
-	}
-
-	if !releaseAccepted(release) {
-		logger.Infof("Expected asset %q. Skipping update.", release.AssetName)
 		return false, nil
 	}
 
@@ -93,11 +76,6 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 	return true, nil
 }
 
-// buildAssetName формирует имя бинарника для текущей платформы.
-func releaseAccepted(r *selfupdate.Release) bool {
-	return r.Arch == runtime.GOARCH && r.OS == runtime.GOOS
-}
-
 // compareVersions сравнивает две версии, возвращает true, если latest > current.
 func compareVersions(current, latest string) (bool, error) {
 	cur, err := semver.NewVersion(current)
@@ -109,15 +87,4 @@ func compareVersions(current, latest string) (bool, error) {
 		return false, fmt.Errorf("parse latest version: %w", err)
 	}
 	return lat.GreaterThan(cur), nil
-}
-
-// tokenTransport добавляет заголовок авторизации к запросам.
-type tokenTransport struct {
-	token string
-	base  http.RoundTripper
-}
-
-func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.Header.Set("PRIVATE-TOKEN", t.token)
-	return t.base.RoundTrip(req)
 }
