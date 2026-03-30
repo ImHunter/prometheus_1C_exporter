@@ -76,7 +76,7 @@ func main() {
 			logger.Info("Auto-update: already up to date")
 		}
 	} else {
-		logger.Info("Auto-update: not configured (GitLab.ProjectURL missing)")
+		logger.Info("Auto-update: not configured (GitLab.ProjectID or GitLab.Home missing)")
 	}
 
 	if err := svc.Run(&app{settings: s, port: port}); err != nil {

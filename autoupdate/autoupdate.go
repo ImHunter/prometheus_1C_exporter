@@ -20,13 +20,13 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 	if cfg == nil {
 		return false, fmt.Errorf("GitLab settings missing")
 	}
-	if cfg.GitLabHome == "" || cfg.ProjectID == 0 {
+	if cfg.Home == "" || cfg.ProjectID == 0 {
 		return false, fmt.Errorf("GitLabHome or ProjectID not set")
 	}
 
 	// Создаём GitLabSource с базовым URL
 	source, err := selfupdate.NewGitLabSource(selfupdate.GitLabConfig{
-		BaseURL:  cfg.GitLabHome,
+		BaseURL:  cfg.Home,
 		APIToken: cfg.AccessToken,
 	})
 	if err != nil {

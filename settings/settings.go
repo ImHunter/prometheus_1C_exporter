@@ -95,7 +95,7 @@ type InfobaseCredentials struct {
 
 // GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	GitLabHome  string `yaml:"GitLabHome"`  // базовый URL GitLab, например "https://gitlab.example.com"
+	Home        string `yaml:"Home"`        // базовый URL GitLab, например "https://gitlab.example.com"
 	ProjectID   int    `yaml:"ProjectID"`   // числовой ID проекта
 	Branch      string `yaml:"Branch"`      // ветка для триггера
 	SecretsFile string `yaml:"SecretsFile"` // имя файла секретов (по умолчанию "secrets.json.enc")
@@ -371,7 +371,7 @@ func (s *Settings) GitlabConfigured() bool {
 	if s.GitLab == nil {
 		return false
 	}
-	return s.GitLab.GitLabHome != "" && s.GitLab.ProjectID != 0 && s.GitLab.AccessToken != ""
+	return s.GitLab.Home != "" && s.GitLab.ProjectID != 0 && s.GitLab.AccessToken != ""
 }
 
 // IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов

@@ -611,11 +611,11 @@ func (a *app) triggerPipeline() error {
 	gl := a.settings.GitLab
 
 	// Используем явные поля: GitLabHome и ProjectID
-	if gl.GitLabHome == "" || gl.ProjectID == 0 {
+	if gl.Home == "" || gl.ProjectID == 0 {
 		return fmt.Errorf("GitLabHome or ProjectID not configured")
 	}
 
-	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.GitLabHome, gl.ProjectID)
+	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.Home, gl.ProjectID)
 
 	data := url.Values{}
 	data.Set("ref", gl.Branch)
