@@ -3,6 +3,7 @@ package autoupdate
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/logger"
 	"github.com/LazarenkoA/prometheus_1C_exporter/settings"
@@ -74,6 +75,19 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 
 	logger.DefaultLogger.Infoln("Update successful, exiting for restart")
 	return true, nil
+}
+
+func ExecutablePath() (string, error) {
+	return selfupdate.ExecutablePath()
+}
+
+func ExecutableDir() (string, error) {
+	path, err := ExecutablePath()
+	if err == nil {
+		return filepath.Dir(path), nil
+	} else {
+		return "", err
+	}
 }
 
 // compareVersions сравнивает две версии, возвращает true, если latest > current.

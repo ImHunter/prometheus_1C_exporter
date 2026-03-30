@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultLogDir      = "logs"
+	DefaultLogDir      = "logs"
 	defaultLogFilename = "log.txt"
 	DefaultPageSize    = 100
 )
@@ -44,7 +44,7 @@ func init() {
 }
 
 func InitLogger(logDir string, ll int) {
-	DefaultLogger = newLogger(logDir) // передаём исходный logDir, не добавляя defaultLogDir
+	DefaultLogger = newLogger(logDir)
 	SetLevel(ll)
 }
 
@@ -57,9 +57,6 @@ func newLogger(logDir string) *zap.SugaredLogger {
 		currentLogFile = "stdout"
 	} else {
 		logPath := logDir
-		if logPath == "" {
-			logPath = defaultLogDir
-		}
 		currentLogFile = filepath.Join(logPath, defaultLogFilename)
 
 		if err := os.MkdirAll(logPath, 0755); err != nil {

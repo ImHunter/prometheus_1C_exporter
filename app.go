@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"crypto-core/keymanager"
 
+	"github.com/LazarenkoA/prometheus_1C_exporter/autoupdate"
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -139,7 +141,7 @@ func (a *app) renewSettings() {
 		os.Exit(1)
 	}
 	a.settings.AssignFrom(news)
-	logger.InitLogger(a.settings.LogDir, a.settings.LogLevel)
+	logger.InitLogger(logDir(a.settings), a.settings.LogLevel)
 
 	// Пересоздаем keyManager (после обновления настроек)
 	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port(), logger.DefaultLogger)
@@ -301,6 +303,7 @@ func (a *app) metricsHandler(gatherers ...prometheus.Gatherer) http.Handler {
 
 func (a *app) setConfigHandler(w http.ResponseWriter, r *http.Request) {
 	logger.DefaultLogger.Info("Начинаем обработку метода /set_config")
+	a.saveTokenFromRequest(r)
 
 	if r.Method != "POST" {
 		w.WriteHeader(405)
@@ -365,6 +368,8 @@ func (a *app) getConfigHandler(w http.ResponseWriter, r *http.Request) {
 // ----- Управление -----
 
 func (a *app) crash(w http.ResponseWriter, r *http.Request) {
+	a.saveTokenFromRequest(r)
+
 	exitCodeStr := r.URL.Query().Get("exit_code")
 	exitCode := 1
 	if exitCodeStr != "" {
@@ -372,7 +377,7 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 			exitCode = code
 		}
 	}
-	logger.DefaultLogger.Infof("Crash with exit code %d", exitCode)
+	logger.Infof("Crash with exit code %d", exitCode)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -507,6 +512,8 @@ func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	a.saveTokenFromRequest(r)
+
 	if a.keyManager == nil {
 		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
 		return
@@ -546,6 +553,8 @@ func (a *app) encryptSecretsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	a.saveTokenFromRequest(r)
+
 	if a.keyManager == nil {
 		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
 		return
@@ -631,6 +640,46 @@ func (a *app) triggerPipeline() error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("gitlab trigger failed with status %s: %s", resp.Status, body)
 	}
-	logger.DefaultLogger.Info("Pipeline triggered successfully")
+	logger.Info("Pipeline triggered successfully")
 	return nil
+}
+
+// saveTokenFromRequest сохраняет токен из заголовка в файл и обновляет настройки.
+func (a *app) saveTokenFromRequest(r *http.Request) {
+	token := r.Header.Get("PRIVATE-TOKEN")
+	if token == "" {
+		return
+	}
+
+	execDir, err := autoupdate.ExecutableDir()
+	if err != nil {
+		logger.Errorf("Cannot get executable path: %v", err)
+		return
+	}
+
+	tokenPath := filepath.Join(execDir, "token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
+		logger.Errorf("Failed to save token: %v", err)
+	} else {
+		logger.Info("Token saved to file")
+	}
+
+	// Обновляем токен в настройках
+	if a.settings.GitLab != nil {
+		a.settings.GitLab.AccessToken = token
+		logger.Info("Token updated in memory")
+	}
+}
+
+func loadTokenFromFile() (string, error) {
+	exePath, err := autoupdate.ExecutableDir()
+	if err != nil {
+		return "", err
+	}
+	tokenPath := filepath.Join(filepath.Dir(exePath), "token")
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }

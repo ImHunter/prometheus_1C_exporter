@@ -95,11 +95,11 @@ type InfobaseCredentials struct {
 
 // GitLabSettings – параметры подключения к GitLab
 type GitLabSettings struct {
-	GitLabHome  string `yaml:"GitLabHome"`            // базовый URL GitLab, например "https://gitlab.example.com"
-	ProjectID   int    `yaml:"ProjectID"`             // числовой ID проекта
-	Branch      string `yaml:"Branch"`                // ветка для триггера
-	SecretsFile string `yaml:"SecretsFile"`           // имя файла секретов (по умолчанию "secrets.json.enc")
-	AccessToken string `yaml:"AccessToken,omitempty"` // Personal Access Token с правами api (для всех операций)
+	GitLabHome  string `yaml:"GitLabHome"`  // базовый URL GitLab, например "https://gitlab.example.com"
+	ProjectID   int    `yaml:"ProjectID"`   // числовой ID проекта
+	Branch      string `yaml:"Branch"`      // ветка для триггера
+	SecretsFile string `yaml:"SecretsFile"` // имя файла секретов (по умолчанию "secrets.json.enc")
+	AccessToken string // Personal Access Token с правами api (для всех операций)
 }
 
 // Структуры для секретов
