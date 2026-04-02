@@ -27,3 +27,5 @@ profile
 keys
 /logs.dev
 .__debug_bin.exe.new
+token
+tokens.yml

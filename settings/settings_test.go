@@ -193,7 +193,7 @@ TTLLogs: 8                    # Время жизни логов в часах
 `
 }
 
-// TestGetLogPass_InternalMode проверяет получение учётных данных из секретов.
+// TestGetLogPass_InternalMode проверяет получение учетных данных из секретов.
 func TestGetLogPass_InternalMode(t *testing.T) {
 	s := &Settings{
 		DBCredentials: &struct {
@@ -230,7 +230,7 @@ func TestGetLogPass_InternalMode(t *testing.T) {
 	assert.Equal(t, "", pass)
 }
 
-// TestGetLogPass_ExternalMode проверяет получение учётных данных из внешнего источника (bases).
+// TestGetLogPass_ExternalMode проверяет получение учетных данных из внешнего источника (bases).
 func TestGetLogPass_ExternalMode(t *testing.T) {
 	s := &Settings{
 		DBCredentials: &struct {
@@ -257,7 +257,7 @@ func TestGetLogPass_ExternalMode(t *testing.T) {
 	assert.Equal(t, "", pass)
 }
 
-// TestRAC_LoginPass_Priority проверяет, что учётные данные RAS берутся из секретов в режиме internal,
+// TestRAC_LoginPass_Priority проверяет, что учетные данные RAS берутся из секретов в режиме internal,
 // а иначе – из конфигурации.
 func TestRAC_LoginPass_Priority(t *testing.T) {
 	s := &Settings{
@@ -285,7 +285,7 @@ func TestRAC_LoginPass_Priority(t *testing.T) {
 		},
 	}
 
-	// Внутренний режим – берём из секретов
+	// Внутренний режим – берем из секретов
 	assert.Equal(t, "secretLogin", s.RAC_Login())
 	assert.Equal(t, "secretPass", s.RAC_Pass())
 

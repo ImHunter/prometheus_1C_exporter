@@ -1,15 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -147,11 +148,11 @@ func (a *app) renewSettings() {
 	km, err := keymanager.NewKeyManager(a.settings.RAC_Host(), a.settings.RAC_Port(), logger.DefaultLogger)
 	if err == nil {
 		a.keyManager = km
-		logger.DefaultLogger.Info("KeyManager reinitialized")
+		logger.DefaultLogger.Info("KeyManager переинициализирован")
 	} else {
-		logger.DefaultLogger.Errorf("keymanager init failed: %v", err)
+		logger.DefaultLogger.Errorf("ошибка инициализации keymanager: %v", err)
 		if a.settings.IsInternalSecrets() {
-			logger.Error("Cannot run in internal secrets mode without keymanager, exiting")
+			logger.Error("Невозможно работать в режиме внутренних секретов без keymanager, выход")
 			os.Exit(1)
 		}
 		a.keyManager = nil
@@ -164,10 +165,10 @@ func (a *app) renewSettings() {
 			var secrets settings.IBCredentials
 			if json.Unmarshal(decrypted, &secrets) == nil {
 				a.settings.UpdateSecrets(&secrets)
-				logger.DefaultLogger.Info("Loaded last secrets from disk")
+				logger.DefaultLogger.Info("Загружены последние секреты с диска")
 			}
 		} else if !os.IsNotExist(err) {
-			logger.DefaultLogger.Warnf("Failed to load secrets from disk: %v", err)
+			logger.DefaultLogger.Warnf("Не удалось загрузить секреты с диска: %v", err)
 		}
 	}
 
@@ -191,11 +192,11 @@ func (a *app) renewSettings() {
 			case model.TypeRAC:
 				targetRegistry = a.racRegistry
 			default:
-				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
+				logger.DefaultLogger.Warnf("Неизвестный тип метрики %v для метрики %s – регистрация пропущена", ex.GetType(), ex.GetName())
 				continue
 			}
 			if err := targetRegistry.Register(ex); err != nil {
-				logger.DefaultLogger.Errorf("Failed to register metric %s: %v", ex.GetName(), err)
+				logger.DefaultLogger.Errorf("Не удалось зарегистрировать метрику %s: %v", ex.GetName(), err)
 			}
 		} else {
 			ex.Stop()
@@ -203,7 +204,7 @@ func (a *app) renewSettings() {
 	}
 	a.metric = newMetrics
 
-	// Запуск пайплайна, если включен внутренний режим и GitLab настроен
+	// Запуск pipeline, если включен внутренний режим и GitLab настроен
 	if a.settings.IsInternalSecrets() && a.settings.GitlabConfigured() && a.keyManager != nil {
 		go func() {
 			time.Sleep(time.Hour * time.Duration(rand.Intn(6)+2))
@@ -226,13 +227,13 @@ func (a *app) register() {
 			case model.TypeRAC:
 				targetRegistry = a.racRegistry
 			default:
-				logger.DefaultLogger.Warnf("Unknown metric type %v for metric %s – skipping registration", ex.GetType(), ex.GetName())
+				logger.DefaultLogger.Warnf("Неизвестный тип метрики %v для метрики %s – регистрация пропущена", ex.GetType(), ex.GetName())
 				continue
 			}
 			if err := targetRegistry.Register(ex); err != nil {
-				logger.DefaultLogger.Errorf("Failed to register metric %s in %s registry: %v", ex.GetName(), ex.GetType(), err)
+				logger.DefaultLogger.Errorf("Не удалось зарегистрировать метрику %s в реестре %s: %v", ex.GetName(), ex.GetType(), err)
 			} else {
-				logger.DefaultLogger.Infof("Registered metric %s in %s registry", ex.GetName(), ex.GetType())
+				logger.DefaultLogger.Infof("Метрика %s зарегистрирована в реестре %s", ex.GetName(), ex.GetType())
 			}
 		} else {
 			ex.Stop()
@@ -249,9 +250,6 @@ func (a *app) initHTTP() {
 	siteMux := http.NewServeMux()
 
 	// Метрики
-	// siteMux.Handle("/metrics", promhttp.Handler())
-	// siteMux.Handle("/metrics_os", promhttp.HandlerFor(a.osRegistry, promhttp.HandlerOpts{}))
-	// siteMux.Handle("/metrics_rac", promhttp.HandlerFor(a.racRegistry, promhttp.HandlerOpts{}))
 	siteMux.Handle("/metrics", a.metricsHandler(a.osRegistry, a.racRegistry))
 	siteMux.Handle("/metrics_os", a.metricsHandler(a.osRegistry))
 	siteMux.Handle("/metrics_rac", a.metricsHandler(a.racRegistry))
@@ -350,13 +348,13 @@ func (a *app) setConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) getConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 
 	data, err := os.ReadFile(a.settings.SettingsPath)
 	if err != nil {
-		http.Error(w, "failed to read config file", http.StatusInternalServerError)
+		http.Error(w, "не удалось прочитать файл конфигурации", http.StatusInternalServerError)
 		return
 	}
 
@@ -377,7 +375,7 @@ func (a *app) crash(w http.ResponseWriter, r *http.Request) {
 			exitCode = code
 		}
 	}
-	logger.Infof("Crash with exit code %d", exitCode)
+	logger.Infof("Аварийное завершение с кодом %d", exitCode)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -403,6 +401,10 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 		"description": "Экспортер метрик Prometheus",
 		"version":     version,
 		"status":      "running",
+		"executable": func() string {
+			path, _ := autoupdate.ExecutablePath()
+			return path
+		}(),
 		"endpoints": []map[string]string{
 			{"path": "/", "method": "GET", "description": "Информационная страница"},
 			{"path": "/metrics", "method": "GET", "description": "Основные метрики Prometheus"},
@@ -431,7 +433,7 @@ func (a *app) homePage(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) getLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -454,11 +456,11 @@ func (a *app) getLog(w http.ResponseWriter, r *http.Request) {
 
 	result, err := logger.ReadLogs(cfg)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read logs: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Не удалось прочитать логи: %v", err), http.StatusInternalServerError)
 		return
 	}
 	if len(result.Entries) == 0 {
-		fmt.Fprintf(w, "=== No log entries found ===\n")
+		fmt.Fprintf(w, "=== Записи в логе не найдены ===\n")
 		return
 	}
 	fmt.Fprintf(w, "=== Lines %d to %d of %d ===\n\n",
@@ -489,7 +491,7 @@ func (a *app) parseLogParams(r *http.Request) (mode string, n, from int) {
 // secretsInfoHandler – GET /secrets
 func (a *app) secretsInfoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 	hasSecrets, hasDefault, hasRas, bases, lastUpdated := a.settings.GetSecretsInfo()
@@ -509,73 +511,73 @@ func (a *app) secretsInfoHandler(w http.ResponseWriter, r *http.Request) {
 // setSecretsHandler – POST /secrets/set (принимает бинарные данные)
 func (a *app) setSecretsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 	a.saveTokenFromRequest(r)
 
 	if a.keyManager == nil {
-		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		http.Error(w, "keymanager не инициализирован", http.StatusServiceUnavailable)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		http.Error(w, "не удалось прочитать тело запроса", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	plaintext, err := a.keyManager.Decrypt(body)
 	if err != nil {
-		http.Error(w, "decryption failed", http.StatusBadRequest)
+		http.Error(w, "ошибка расшифровки", http.StatusBadRequest)
 		return
 	}
 
 	var secrets settings.IBCredentials
 	if err := json.Unmarshal(plaintext, &secrets); err != nil {
-		http.Error(w, "invalid secrets format", http.StatusBadRequest)
+		http.Error(w, "неверный формат секретов", http.StatusBadRequest)
 		return
 	}
 
 	a.settings.UpdateSecrets(&secrets)
 	if err := a.keyManager.SaveLastSecrets(plaintext); err != nil {
-		logger.DefaultLogger.Errorf("Failed to save secrets to disk: %v", err)
+		logger.DefaultLogger.Errorf("Не удалось сохранить секреты на диск: %v", err)
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "secrets updated"})
+	json.NewEncoder(w).Encode(map[string]string{"status": "секреты обновлены"})
 }
 
 // encryptSecretsHandler – POST /secrets/encrypt
 func (a *app) encryptSecretsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 	a.saveTokenFromRequest(r)
 
 	if a.keyManager == nil {
-		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		http.Error(w, "keymanager не инициализирован", http.StatusServiceUnavailable)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		http.Error(w, "не удалось прочитать тело запроса", http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
 
 	var dummy interface{}
 	if err := json.Unmarshal(body, &dummy); err != nil {
-		http.Error(w, "invalid JSON format", http.StatusBadRequest)
+		http.Error(w, "неверный формат JSON", http.StatusBadRequest)
 		return
 	}
 
 	encrypted, err := a.keyManager.Encrypt(body)
 	if err != nil {
-		http.Error(w, "encryption failed: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "ошибка шифрования: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -586,11 +588,11 @@ func (a *app) encryptSecretsHandler(w http.ResponseWriter, r *http.Request) {
 // secretsPubKeyHandler – GET /secrets/pub_key
 func (a *app) secretsPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 	if a.keyManager == nil {
-		http.Error(w, "key manager not initialized", http.StatusServiceUnavailable)
+		http.Error(w, "keymanager не инициализирован", http.StatusServiceUnavailable)
 		return
 	}
 	pem, err := a.keyManager.PublicKeyPEM()
@@ -610,76 +612,77 @@ func (a *app) triggerPipeline() error {
 	}
 	gl := a.settings.GitLab
 
-	// Используем явные поля: GitLabHome и ProjectID
-	if gl.Home == "" || gl.ProjectID == 0 {
-		return fmt.Errorf("GitLabHome or ProjectID not configured")
+	if gl.Tokens.TriggerToken == "" {
+		logger.Warn("TriggerToken не заполнен, невозможно запустить pipeline")
+		return nil
 	}
 
 	apiURL := fmt.Sprintf("%s/api/v4/projects/%d/trigger/pipeline", gl.Home, gl.ProjectID)
 
-	data := url.Values{}
-	data.Set("ref", gl.Branch)
+	// Используем multipart/form-data, как в официальном curl примере
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Обязательные поля
+	writer.WriteField("token", gl.Tokens.TriggerToken)
+	writer.WriteField("ref", gl.Branch)
+
+	// Опциональные переменные
 	if gl.SecretsFile != "" {
-		data.Set("variables[SECRETS_FILE]", gl.SecretsFile)
+		writer.WriteField("variables[SECRETS_FILE]", gl.SecretsFile)
 	}
 
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("ошибка закрытия writer: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", gl.AccessToken)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	req, err := http.NewRequest("POST", apiURL, body)
+	if err != nil {
+		return fmt.Errorf("ошибка создания Request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	logger.Debugf("URL триггера: %s", apiURL)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("http request failed: %w", err)
+		return fmt.Errorf("ошибка исполнения HTTP-запроса: %w", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("gitlab trigger failed with status %s: %s", resp.Status, body)
+		return fmt.Errorf("запуск триггера GitLab завершился ошибкой со статусом %s: %s", resp.Status, respBody)
 	}
-	logger.Info("Pipeline triggered successfully")
+	logger.Info("Pipeline запроса секретов успешно запущен")
 	return nil
 }
 
 // saveTokenFromRequest сохраняет токен из заголовка в файл и обновляет настройки.
 func (a *app) saveTokenFromRequest(r *http.Request) {
-	token := r.Header.Get("PRIVATE-TOKEN")
-	if token == "" {
-		return
-	}
+	triggerToken := r.Header.Get("TRIGGER-TOKEN")
+	projectToken := r.Header.Get("PROJECT-TOKEN")
 
 	execDir, err := autoupdate.ExecutableDir()
 	if err != nil {
-		logger.Errorf("Cannot get executable path: %v", err)
+		logger.Errorf("Не удалось получить каталог исполняемого файла: %v", err)
 		return
 	}
 
-	tokenPath := filepath.Join(execDir, "token")
-	if err := os.WriteFile(tokenPath, []byte(token), 0600); err != nil {
-		logger.Errorf("Failed to save token: %v", err)
-	} else {
-		logger.Info("Token saved to file")
-	}
-
 	// Обновляем токен в настройках
-	if a.settings.GitLab != nil {
-		a.settings.GitLab.AccessToken = token
-		logger.Info("Token updated in memory")
+	if a.settings.GitLab == nil {
+		a.settings.GitLab = &settings.GitLabSettings{}
 	}
-}
 
-func loadTokenFromFile() (string, error) {
-	exePath, err := autoupdate.ExecutableDir()
-	if err != nil {
-		return "", err
+	a.settings.GitLab.Tokens.TriggerToken = triggerToken
+	a.settings.GitLab.Tokens.ProjectToken = projectToken
+	logger.Info("Токены обновлены в памяти")
+
+	tokensPath := filepath.Join(execDir, settings.TokensFileName)
+	if err := a.settings.GitLab.Tokens.SaveToFile(tokensPath); err != nil {
+		logger.Errorf("Не удалось сохранить токены %v", err)
+	} else {
+		logger.Info("Токены сохранены в файл")
 	}
-	tokenPath := filepath.Join(filepath.Dir(exePath), "token")
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), nil
+
 }

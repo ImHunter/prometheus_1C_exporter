@@ -24,10 +24,10 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, fmt.Errorf("GitLabHome or ProjectID not set")
 	}
 
-	// Создаём GitLabSource с базовым URL
+	// Создаем GitLabSource с базовым URL
 	source, err := selfupdate.NewGitLabSource(selfupdate.GitLabConfig{
 		BaseURL:  cfg.Home,
-		APIToken: cfg.AccessToken,
+		APIToken: cfg.Tokens.ProjectToken,
 	})
 	if err != nil {
 		return false, fmt.Errorf("create GitLab source: %w", err)
@@ -73,7 +73,6 @@ func CheckAndUpdate(cfg *settings.GitLabSettings, currentVersion string) (bool, 
 		return false, fmt.Errorf("update binary: %w", err)
 	}
 
-	logger.DefaultLogger.Infoln("Update successful, exiting for restart")
 	return true, nil
 }
 

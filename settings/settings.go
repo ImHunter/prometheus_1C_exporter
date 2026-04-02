@@ -22,8 +22,9 @@ import (
 
 type TypeMetricKind string
 
+// Значения TypeMetricKind
 const (
-	KindUndefined                      = ""
+	KindUndefined       TypeMetricKind = ""
 	KindSummary         TypeMetricKind = "Summary"
 	KindGauge           TypeMetricKind = "Gauge"
 	KindNativeHistogram TypeMetricKind = "NativeHistogram"
@@ -31,10 +32,16 @@ const (
 
 type TypeCredentialsSource string
 
+// Значения TypeCredentialsSource
 const (
 	CredentialsSourceUndefined TypeCredentialsSource = ""         // не задан (по умолчанию external)
 	CredentialsSourceExternal  TypeCredentialsSource = "external" // секреты из внешнего HTTP-сервиса (бывший plain)
 	CredentialsSourceInternal  TypeCredentialsSource = "internal" // секреты через GitLab или прямую установку (бывший gitlab)
+)
+
+// Другие константы
+const (
+	TokensFileName string = "tokens.yml"
 )
 
 type TypeHostLabelFrom string
@@ -99,7 +106,7 @@ type GitLabSettings struct {
 	ProjectID   int    `yaml:"ProjectID"`   // числовой ID проекта
 	Branch      string `yaml:"Branch"`      // ветка для триггера
 	SecretsFile string `yaml:"SecretsFile"` // имя файла секретов (по умолчанию "secrets.json.enc")
-	AccessToken string // Personal Access Token с правами api (для всех операций)
+	Tokens      TokensStore
 }
 
 // Структуры для секретов
@@ -112,6 +119,11 @@ type IBCredentials struct {
 	RAS          *IBCred           `json:"ras,omitempty"`
 	IbaseDefault *IBCred           `json:"ibase_default,omitempty"`
 	Ibases       map[string]IBCred `json:"ibases,omitempty"`
+}
+
+type TokensStore struct {
+	TriggerToken string `yaml:"TriggerToken"` // Токен для инициализации триггера, по которому в ответ в экспортер придут секреты, вида Trigger token.
+	ProjectToken string `yaml:"ProjectToken"` // Токен для получения обновлений, вида Project Access Token.
 }
 
 func (s *Settings) AssignFrom(src *Settings) error {
@@ -371,7 +383,7 @@ func (s *Settings) GitlabConfigured() bool {
 	if s.GitLab == nil {
 		return false
 	}
-	return s.GitLab.Home != "" && s.GitLab.ProjectID != 0 && s.GitLab.AccessToken != ""
+	return s.GitLab.Home != "" && s.GitLab.ProjectID != 0 && s.GitLab.Tokens.ProjectToken != "" && s.GitLab.Tokens.TriggerToken != ""
 }
 
 // IsInternalSecrets возвращает true, если включен режим внутреннего хранения секретов
@@ -392,6 +404,8 @@ func (s *Settings) IsExternalSecrets() bool {
 	return s.DBCredentials.Source == CredentialsSourceExternal || s.DBCredentials.Source == CredentialsSourceUndefined
 }
 
+// ------------------------- Методы IBCredentials ---------------------------
+
 // Возвращает логин, пароль и флаг успеха.
 func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) {
 	if c == nil {
@@ -404,4 +418,36 @@ func (c *IBCredentials) getForBase(ibName string) (login, pass string, ok bool) 
 		return c.IbaseDefault.Login, c.IbaseDefault.Password, true
 	}
 	return "", "", false
+}
+
+// ------------------------- Методы TokensStore ---------------------------
+
+func (store *TokensStore) SaveToFile(filename string) error {
+
+	data, err := yaml.Marshal(store)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (store *TokensStore) LoadFromFile(filename string) error {
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	err = yaml.Unmarshal(data, store)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
