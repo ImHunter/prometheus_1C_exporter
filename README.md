@@ -398,6 +398,8 @@ include:
 
 stages:
   - upload
+  - restart
+  - propagate
 
 default:
   image: alpine/curl:8.17.0
@@ -405,28 +407,153 @@ default:
 upload_file:
   stage: upload
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH != "main"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH != "main"
       changes:
         - settings.yml
       when: always
     - when: never
   script:
-    - FILE_TO_UPLOAD=${FILE_TO_UPLOAD:-settings.yml}
-    - echo "Uploading $FILE_TO_UPLOAD to $SERVER_URL"
-    - curl -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/config/set" --fail
+    - |
+      FILE_TO_UPLOAD=${FILE_TO_UPLOAD:-settings.yml}
+      echo "Uploading $FILE_TO_UPLOAD to $SERVER_URL"
+      curl -X POST -F "file=@$FILE_TO_UPLOAD" "$SERVER_URL/config/set" --header "TRIGGER-TOKEN: $TRIGGER_TOKEN" --header "PROJECT-TOKEN: $PROJECT_TOKEN" --fail
 
 send_secrets:
   stage: upload
   rules:
     - if: $CI_PIPELINE_SOURCE == "trigger"
-    - changes:
+      when: always
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_TAG == null && $CI_COMMIT_BRANCH != "main"
+      changes:
         - secrets.json.enc
       when: always
+    - when: never
   script:
-    - SECRETS_FILE=${SECRETS_FILE:-secrets.json.enc}
-    - if [ ! -f "$SECRETS_FILE" ]; then echo "Secrets file not found"; exit 1; fi
-    - curl -X POST "$SERVER_URL/secrets/set" --data-binary "@$SECRETS_FILE" --fail
-    - echo "Secrets delivered"
+    - |
+      echo "CI_PIPELINE_SOURCE: $CI_PIPELINE_SOURCE CI_COMMIT_TAG: $CI_COMMIT_TAG CI_COMMIT_BRANCH: $CI_COMMIT_BRANCH"
+      SECRETS_FILE=${SECRETS_FILE:-secrets.json.enc}
+      if [ ! -f "$SECRETS_FILE" ]; then echo "Secrets file not found"; exit 1; fi
+      curl -X POST "$SERVER_URL/secrets/set" --data-binary "@$SECRETS_FILE" --header "TRIGGER-TOKEN: $TRIGGER_TOKEN" --header "PROJECT-TOKEN: $PROJECT_TOKEN" --fail
+      echo "Secrets delivered"
+          
+restart_exporters:
+  stage: restart
+  rules:
+    - if: $CI_COMMIT_TAG != null
+      when: always
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+    - when: never
+  script:
+    - |
+      echo "Fetching branches..."
+      URL="$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/branches?per_page=100"
+      curl --silent --show-error --header "PRIVATE-TOKEN: $PROJECT_TOKEN" "$URL" > branches.json
+
+      if grep -q '"error"' branches.json; then
+        echo "ERROR: API returned error:"
+        cat branches.json
+        exit 1
+      fi
+
+      BRANCHES=$(grep -o '"name":"[^"]*"' branches.json | sed 's/"name":"//;s/"//' | grep -v '^main$')
+
+      for branch in $BRANCHES; do
+        echo "Processing branch: $branch"
+
+        # Получаем raw‑содержимое exporter-vars.yml из ветки
+        RAW_CONTENT=$(curl --silent --show-error --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+          "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/exporter-vars.yml/raw?ref=$branch" \
+          --fail 2>&1) || {
+            echo "Failed to fetch exporter-vars.yml for $branch (exit $?)"
+            continue
+          }
+
+        # Извлекаем SERVER_URL, удаляем комментарии и пробелы
+        SERVER_URL=$(echo "$RAW_CONTENT" \
+          | grep -E '^[[:space:]]*SERVER_URL:' \
+          | sed -E 's/[[:space:]]*#.*//' \
+          | sed -E 's/.*SERVER_URL:[[:space:]]*"?([^"]*)"?/\1/' \
+          | xargs)
+
+        if [ -z "$SERVER_URL" ]; then
+          echo "No SERVER_URL found in $branch, skipping"
+          continue
+        fi
+
+        echo "DEBUG: SERVER_URL='$SERVER_URL'"
+
+        echo "Restarting exporter for $branch at $SERVER_URL"
+        curl -X POST "$SERVER_URL/shutdown_emulate?exit_code=1" \
+          --header "TRIGGER-TOKEN: $TRIGGER_TOKEN" --header "PROJECT-TOKEN: $PROJECT_TOKEN" \
+          --fail || echo "Failed to restart $branch"
+      done
+            
+propagate_pipeline:
+  stage: propagate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+      changes:
+        - main-pipeline.yml
+      when: always
+    - when: never
+  script:
+    - |
+      # Получаем содержимое файла main-pipeline.yml из текущего коммита (main)
+      # Можно также скачать из API
+      curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+        "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml/raw?ref=$CI_COMMIT_SHA" \
+        > main-pipeline.yml
+
+      if [ ! -s main-pipeline.yml ]; then
+        echo "Failed to fetch main-pipeline.yml"
+        exit 1
+      fi
+
+      # Получаем список веток (исключая main)
+      BRANCHES=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+        "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/branches?per_page=100" \
+        | grep -o '"name":"[^"]*"' | sed 's/"name":"//;s/"//' | grep -v '^main$')
+
+      for branch in $BRANCHES; do
+        echo "Updating main-pipeline.yml in branch $branch"
+
+        # Получаем текущий SHA последнего коммита ветки
+        BRANCH_INFO=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+          "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/branches/$branch")
+        BRANCH_SHA=$(echo "$BRANCH_INFO" | grep -o '"commit":{[^}]*"id":"[^"]*"' | sed 's/.*"id":"\([^"]*\)".*/\1/')
+
+        # Проверяем, существует ли уже файл main-pipeline.yml в ветке
+        FILE_INFO=$(curl --silent --write-out "%{http_code}" --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+          "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml?ref=$branch" \
+          -o /dev/null 2>&1)
+        if [ "$FILE_INFO" = "200" ]; then
+          # Файл существует, нужно получить его SHA для обновления
+          FILE_SHA=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+            "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml?ref=$branch" \
+            | grep -o '"last_commit_id":"[^"]*"' | sed 's/"last_commit_id":"//;s/"//')
+          # Создаем коммит с обновлением
+          curl --request POST --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+            --form "branch=$branch" \
+            --form "commit_message=Update main-pipeline.yml from main" \
+            --form "actions[][action]=update" \
+            --form "actions[][file_path]=main-pipeline.yml" \
+            --form "actions[][content]=<main-pipeline.yml" \
+            --form "actions[][last_commit_id]=$FILE_SHA" \
+            "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/commits" \
+            --fail
+        else
+          # Файла нет, создаем
+          curl --request POST --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
+            --form "branch=$branch" \
+            --form "commit_message=Add main-pipeline.yml from main" \
+            --form "actions[][action]=create" \
+            --form "actions[][file_path]=main-pipeline.yml" \
+            --form "actions[][content]=<main-pipeline.yml" \
+            "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/commits" \
+            --fail
+        fi
+      done
 ```
 
 ### 2. Обновление конфигурационного файла

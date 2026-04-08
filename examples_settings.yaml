@@ -52,9 +52,8 @@ DBCredentials:
 GitLab:
   GitLabHome: "https://gitlab.example.com"
   ProjectID: 123456
-  Branch: "main"
+  Branch: "ut-prod"
   SecretsFile: "secrets.json.enc"
-  AccessToken: "glpat-xxxxxxxxxxxxxxxx"   # Personal Access Token с правами api
 
 RAC:
   Path: "C:\\Program Files\\1cv8\\8.3.21.1644\\bin\\rac.exe"

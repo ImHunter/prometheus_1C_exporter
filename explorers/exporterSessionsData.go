@@ -118,6 +118,7 @@ func (exp *ExporterSessionsData) getValue() {
 
 	usedGauge := exp.usedGauge(exp.settings) && exp.gauge != nil
 	usedSummary := exp.usedSummary(exp.settings) && exp.summary != nil
+	usedHistogram := exp.usedHistogram(exp.settings)
 
 	if usedSummary {
 		exp.summary.Reset()
@@ -127,7 +128,7 @@ func (exp *ExporterSessionsData) getValue() {
 		exp.gauge.Reset()
 	}
 
-	if exp.usedHistogram(exp.settings) {
+	if usedHistogram {
 		if exp.usedExemplars() {
 			exemplarChecker = newExemplarChecker(exp.buff)
 			exemplarChecker.findRandomExemplars(5)
@@ -136,6 +137,11 @@ func (exp *ExporterSessionsData) getValue() {
 		for _, h := range exp.histograms {
 			h.Reset()
 		}
+	}
+
+	if len(exp.buff.dataMap) == 0 {
+		exp.logger.Info("Буфер данных пуст")
+		return
 	}
 
 	for k, lv := range exp.buff.dataMap {
@@ -164,7 +170,7 @@ func (exp *ExporterSessionsData) getValue() {
 			}
 		}
 
-		if exp.usedHistogram(exp.settings) {
+		if usedHistogram {
 			withLabel := lv.GetWith("base", "appid")
 			withExemplar := lv.GetWith("id", "user")
 			for n, m := range lv.metersData {
