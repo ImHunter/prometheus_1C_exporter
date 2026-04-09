@@ -133,10 +133,6 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 				baseinfo, err := exp.getInfoBase(db.guid, db.name)
 				if err != nil {
 					atomic.StoreInt32(&hasError, 1)
-					// exp.logger.Errorw("Ошибка получения информации",
-					// 	"base", db.name,
-					// 	"guid", db.guid,
-					// 	"error", err)
 				} else {
 					lv := newLabeledValues()
 					lv.labelsData["base"] = db.name
@@ -206,7 +202,7 @@ func (exp *ExporterInfobaseInfo) getInfoBase(baseGuid, basename string) (map[str
 
 	exp.logger.With("param", param).Debugf("Получаем информацию для базы %q", basename)
 	if result, err := exp.run(exec.CommandContext(exp.ctx, exp.settings.RAC_Path(), param...)); err != nil {
-		exp.logger.Error(err)
+		exp.logger.With("infobase-user", login).Error(err)
 		return map[string]string{}, err
 	} else {
 		var baseInfo []map[string]string

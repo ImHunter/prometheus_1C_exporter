@@ -18,6 +18,8 @@
   - Автоматическое возобновление
   - Раздельные эндпоинты для разных типов метрик
 
+- **Новое: Интеграция с GitLab** – централизованное удаленное управление конфигурацией и секретами, автоматическая доставка изменений, автообновление бинарного файла. Все операции выполняются без доступа на сервер, где работает экспортер.
+
 - Готовые примеры визуализации для Grafana
 - Поддержка работы в качестве службы (Windows/Linux)
 
@@ -47,11 +49,13 @@
 ## 🚀 Запуск
 
 **Linux:**
+
 ```bash
 ./1C_exporter -port=9095 --settings=/path/to/settings.yaml
 ```
 
 **Windows:**
+
 ```cmd
 1C_exporter.exe -port=9095 --settings=/path/to/settings.yaml
 ```
@@ -88,118 +92,243 @@ scrape_configs:
       - targets: ['1c-server1:9091']
 ```
 
-## 🛠 Методы HTTP-сервиса
+## 🛠 Управление сбором метрик
 
-| Метод | URL-формат | Параметры | Описание |
-|-------|------------|-----------|----------|
+|Метод|URL-формат|Параметры|Описание|
+|---|------------|-----------|----------|
 | GET | `/` | – | Информационная страница со списком доступных эндпоинтов |
 | GET | `/metrics` | – | Основные метрики Prometheus (композиционные) |
 | GET | `/metrics_os` | – | Метрики операционной системы (CPU, память, диски) |
 | GET | `/metrics_rac` | – | Метрики RAC (лицензии, соединения, сеансы) |
 | GET | `/metrics_internal` | – | Метрики работы экспортера |
-| GET | `/Pause` | `metricNames`<br>`offsetMin` (опционально) | Приостанавливает сбор указанных метрик на заданное время (в минутах) |
-| GET | `/Continue` | `metricNames` | Возобновляет сбор указанных метрик |
-| GET | `/log` | `mode`, `n`, `from` | Читает содержимое лога: <br>`mode=first` – первые `n` строк,<br>`mode=last` – последние `n` строк,<br>`mode=range` – строки с `from` по `from+n-1` |
-| GET | `/config/get` | – | Возвращает текущий конфигурационный файл `settings.yml` |
-| POST | `/config/set` | `file` (multipart/form-data) | Загружает новый конфигурационный файл (`settings.yml`) и применяет его без перезапуска |
-| GET | `/debug/pprof/*` | – | Стандартные эндпоинты для профилирования Go |
-| POST | `/shutdown_emulate` | `exit_code` (опционально) | Аварийно завершает процесс с указанным кодом выхода |
-| GET | `/secrets` | – | Информация о загруженных секретах (наличие, список баз, время обновления) |
-| GET | `/secrets/pub_key` | – | Возвращает публичный ключ RSA в формате PEM |
-| POST | `/secrets/set` | бинарные данные | Принимает зашифрованные секреты (JSON-пакет), расшифровывает и сохраняет их |
-| POST | `/secrets/encrypt` | JSON с открытыми секретами | Шифрует открытые секреты публичным ключом и возвращает JSON-пакет для отправки на `/secrets/set` |
+ GET   | `/Pause`   | `metricNames` (обязательный, разделенный запятыми)<br/>`offsetMin` (опционально, минуты) | Приостанавливает сбор указанных метрик на заданное время (по умолчанию 5 минут). |
+| GET   | `/Continue`| `metricNames` (обязательный, разделенный запятыми) | Возобновляет сбор указанных метрик. |
 
-### Примеры использования
+**Примеры:**
+```
+http://host:9091/Pause?metricNames=processes,connections&offsetMin=5
+http://host:9091/Continue?metricNames=disk_metrics
+```
 
-#### Через браузер (GET-запросы)
+## 📊 Метрики
 
-- **Главная страница** – отображает информацию о сервисе и список доступных эндпоинтов в формате JSON.  
-  Откройте в браузере: `http://localhost:9091/`
+### Основные категории
 
-- **Метрики Prometheus**  
-  - Общие метрики: `http://localhost:9091/metrics`  
-  - Метрики операционной системы: `http://localhost:9091/metrics_os`  
-  - Метрики RAC: `http://localhost:9091/metrics_rac`  
-  В браузере отобразится текстовый вывод в формате Prometheus.
+| Категория      | Метрики                       | Эндпоинт |
+|----------------|-------------------------------|----------|
+| Системные      | CPU, память, диски             | `/metrics_os` |
+| RAC-метрики    | Лицензии, соединения, сеансы   | `/metrics_rac` |
+| Композиционные | Все метрики                    | `/metrics` |
 
-- **Публичный ключ** – для получения PEM-ключа:  
-  `http://localhost:9091/secrets/pub_key`  
-  Браузер скачает файл публичного ключа.
+### Детализация метрик
 
-- **Конфигурация** – получить текущий файл `settings.yml`:  
-  `http://localhost:9091/config/get`
+|Метрика|Описание|Тип данных|
+|---|---|---|
+|`available_performance`|Доступная производительность хоста|Summary|
+|`sessions_data`|Показатели сессий из кластера 1С|Summary, Gauge, NativeHistogram|
+|`session`|Сессии 1С|Summary, Gauge|
+|`connect`|Соединения 1С|Summary|
+|`client_lic`|Клиентские лицензии 1С|Summary|
+|`shedule_job`|Состояние галки "блокировка регламентных заданий" (1 – установлена, иначе 0 или отсутствует)|Gauge|
+|`ibinfo`|Состояние галок "Блокировка регламентных заданий", "Запрет начала сеансов" (1 – установлена, иначе 0 или отсутствует)|Gauge|
+|`cpu`|Метрики CPU (общий процент загрузки)|Summary|
+|`processes`|Метрики CPU/памяти в разрезе процессов|Summary|
+|`disk`|Показатели дисков|Summary|
 
-- **Информация о секретах** – для проверки загруженных секретов:  
-  `http://localhost:9091/secrets`  
-  Вернется JSON с полями `has_secrets`, `has_default`, `has_ras`, `bases`, `last_updated`.
+## 📈 Примеры запросов PromQL
 
-- **Чтение логов** – пример для просмотра последних 50 строк лога:  
-  `http://localhost:9091/log?mode=last&n=50`  
-  (можно менять параметры прямо в адресной строке)
+Клиентские лицензии:
 
-- **Профилирование Go** – стандартные эндпоинты pprof:  
-  `http://localhost:9091/debug/pprof/` – список профилей  
-  `http://localhost:9091/debug/pprof/heap` – профиль памяти  
-  и т.д. (доступны все стандартные pprof-маршруты)
+```PromQL
+sum by (licSRV) (client_lic{quantile="0.99", licSRV=~"(?i).+sys.+"})
+```
 
-- **Приостановка и возобновление сбора метрик** (параметры передаются в строке запроса):  
-  Приостановить сбор метрик `processes,connections` на 5 минут:  
-  `http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5`  
-  Возобновить сбор метрик `disk_metrics`:  
-  `http://localhost:9091/Continue?metricNames=disk_metrics`
+Средняя загрузка CPU:
 
-#### Через cURL
+```PromQL
+avg_over_time(cpu{quantile="0.99"} [1m])
+```
 
-- **Получение публичного ключа**
-  ```bash
-  curl http://localhost:9091/secrets/pub_key > exporter.pub
-  ```
+Загрузка CPU в разрезе процессов:
 
-- **Шифрование секретов с помощью эндпоинта `/secrets/encrypt`**
-  ```bash
-  curl -X POST http://localhost:9091/secrets/encrypt -H "Content-Type: application/json" -d @secrets.json --output secrets.json.enc
-  ```
+```PromQL
+topk(10, sum(avg_over_time(processes{quantile="0.99", metrics="cpu"}[1m])) by (procName) )
+```
 
-- **Отправка зашифрованных секретов**
-  ```bash
-  curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
-  ```
+Загрузка ОЗУ в разрезе процессов:
 
-- **Загрузка нового конфигурационного файла**
-  ```bash
-  curl -X POST http://localhost:9091/config/set -F "file=@settings.yml"
-  ```
+```PromQL
+topk(10, sum(avg_over_time(processes{quantile="0.99", metrics="memoryRSS"}[1m])) by (procName) )
+```
 
-- **Получение текущего конфигурационного файла**
-  ```bash
-  curl http://localhost:9091/config/get --output settings.yml
-  ```
+Доступная производительность 1С:
 
-- **Эмуляция аварийного завершения**
-  ```bash
-  curl -X POST "http://localhost:9091/shutdown_emulate?exit_code=0"
-  ```
+```PromQL
+avg_over_time(available_performance{quantile="0.99"}[10m])
+```
 
-- **Чтение логов** (последние 50 строк)
-  ```bash
-  curl "http://localhost:9091/log?mode=last&n=50"
-  ```
+Количество сеансов в 1С:
 
-- **Приостановка сбора метрик**
-  ```bash
-  curl "http://localhost:9091/Pause?metricNames=processes,connections&offsetMin=5"
-  ```
+```PromQL
+session{quantile="0.99"}
+```
 
-- **Возобновление сбора метрик**
-  ```bash
-  curl "http://localhost:9091/Continue?metricNames=disk_metrics"
-  ```
+CPU time (консоль 1С):
 
-#### Шифрование секретов с помощью bash-скрипта (локально, без передачи открытых данных)
+```PromQL
+rate(sessions_data{quantile="0.99", datatype="cputimetotal"}[5m])
+```
 
-Для шифрования секретов без передачи их по сети, можно использовать bash-скрипт. Это требует наличия Git Bash (входит в состав Git for Windows) или соответствующей утилиты Linux-окружения.
+## 🔧 Новые HTTP-методы для удаленного управления
 
-**Скрипт `encrypt.sh`** (сохраните в папку с `exporter.pub` и `secrets.json`):
+Экспортер предоставляет дополнительные эндпоинты для удаленного управления конфигурацией, секретами и жизненным циклом. Все методы доступны без доступа на сервер.
+
+### Управление конфигурацией
+
+|Метод|URL|Параметры / Тело|Описание|
+|---|---|---|---|
+|POST|`/config/set`|multipart/form-data, поле `file` | Загружает новый конфигурационный файл `settings.yml`. Применяет настройки без перезапуска.|
+|GET|`/config/get`|–|Возвращает текущий конфигурационный файл `settings.yml`.|
+
+### Управление секретами
+
+|Метод|URL|Параметры / Тело|Описание|
+|---|---|---|---|
+|GET|`/secrets/pub_key`|–|Возвращает публичный ключ RSA в формате PEM.|
+|POST|`/secrets/encrypt`|JSON с открытыми секретами|Шифрует открытые секреты публичным ключом экспортера, возвращает зашифрованный пакет.|
+|POST|`/secrets/set`|Бинарные данные (зашифрованный JSON) | Принимает зашифрованные секреты, расшифровывает и сохраняет их в памяти и на диск.|
+|GET|`/secrets`|–|Возвращает информацию о загруженных секретах (метаданные, список баз, время обновления).|
+
+### Управление жизненным циклом и диагностика
+
+|Метод|URL|Параметры / Тело|Описание|
+|---|---|---|---|
+|POST|`/shutdown_emulate`|`?exit_code=N` (опционально, по умолчанию 1)|Аварийно завершает процесс с указанным кодом.|
+|GET|`/log`|`mode=first/last/range`, `n`, `from`|Читает содержимое лога (первые/последние строки или диапазон).|
+
+**Примеры использования:**
+
+Загрузка конфигурации:
+
+```bash
+curl -X POST -F "file=@settings.yml" http://exporter:9091/config/set
+```
+
+Получение публичного ключа:
+
+```bash
+curl http://exporter:9091/secrets/pub_key > exporter.pub
+```
+
+Шифрование секретов (резервный способ – см. предупреждение ниже):
+
+```bash
+curl -X POST http://exporter:9091/secrets/encrypt -H "Content-Type: application/json" -d @secrets.json --output secrets.json.enc
+```
+
+Отправка зашифрованных секретов:
+
+```bash
+curl -X POST http://exporter:9091/secrets/set --data-binary @secrets.json.enc
+```
+
+Принудительный перезапуск экспортера (для применения обновления):
+
+```bash
+curl -X POST "http://exporter:9091/shutdown_emulate?exit_code=1"
+```
+
+Чтение последних 50 строк лога:
+
+```bash
+curl "http://exporter:9091/log?mode=last&n=50"
+```
+
+> **Предупреждение:** Шифрование через эндпоинт `/secrets/encrypt` передает открытые секреты по HTTP. Используйте этот способ только в защищенных сетях (например, через VPN) или как резервный. Для повышения безопасности предпочтительно локальное шифрование (см. раздел «Локальное шифрование»).
+
+## 🔄 Интеграция с GitLab и централизованное удаленное управление
+
+Все новые возможности предназначены для **удаленного управления экспортерами без необходимости доступа на сервер**, где они работают. Администратор может изменять настройки, секреты и обновлять бинарный файл, не заходя на сервер, – через GitLab‑репозиторий и CI/CD.
+
+Для этого используется отдельный GitLab‑проект (далее «проект конфигураций»), в котором для каждого экземпляра экспортера создается отдельная ветка. **Главная ветка должна называться `main`** – это имя используется в скрипте пайплайна. Ветка `main` предназначена **только для хранения и доработки скрипта пайплайна** (`main-pipeline.yml`). В ней не должно быть конфигурационных файлов экспортеров.
+
+### 1. Настройка GitLab в конфигурации экспортера
+
+В файл `settings.yml` добавьте секцию:
+
+```yaml
+GitLab:
+  Home: "https://gitlab.my-company.ru"      # базовый URL GitLab
+  ProjectID: 123456                         # числовой ID проекта конфигураций
+  Branch: "ut-prod"                         # ветка, соответствующая этому экспортеру
+  SecretsFile: "secrets.json.enc"           # имя файла с секретами (опционально)
+```
+
+**Токены доступа** не указываются в `settings.yml`. Они хранятся в отдельном файле `tokens.yml`, расположенном в той же папке, что и бинарник экспортера. Структура `tokens.yml`:
+
+```yaml
+TriggerToken: "glptt-..."   # Trigger token для запуска pipeline (создается в настройках CI/CD)
+ProjectToken: "glpat-..."   # Project Access Token с правами api и write_repository
+```
+
+При первом запуске экспортер попытается загрузить токены из `tokens.yml`. Если файл отсутствует, экспортер продолжит работу без интеграции с GitLab. Токены также могут быть переданы через HTTP-заголовки `TRIGGER-TOKEN` и `PROJECT-TOKEN` при вызовах эндпоинтов `/config/set`, `/secrets/set`, `/shutdown_emulate` – они будут сохранены в `tokens.yml` автоматически.
+
+### 2. Режимы получения секретов
+
+Экспортер поддерживает два режима получения учетных данных для информационных баз 1С:
+
+- **`external`** (по умолчанию) – секреты запрашиваются с внешнего HTTP-сервиса, указанного в `DBCredentials.URL`.
+- **`internal`** – секреты хранятся в зашифрованном виде и доставляются через GitLab (или вручную через эндпоинт `/secrets/set`).
+
+Режим задается в секции `DBCredentials`:
+
+```yaml
+DBCredentials:
+  Source: "internal"   # или "external"
+  # URL, User, Password – используются только в режиме external
+```
+
+При `Source: "internal"` экспортер игнорирует внешний REST-сервис и полагается на переданные зашифрованные секреты.
+
+### 3. Управление секретами (шифрование)
+
+Экспортер генерирует пару RSA-ключей (3072 бит) при первом запуске. Ключи хранятся в подкаталоге `keys/<host>_<port>/` рядом с бинарником. Публичный ключ можно получить через `/secrets/pub_key`.
+
+**Формат открытых секретов (JSON):**
+
+```json
+{
+  "ras": { "login": "admin", "password": "ras_pass" },
+  "ibase_default": { "login": "default_user", "password": "default_pass" },
+  "ibases": {
+    "main_db": { "login": "main_user", "password": "main_pass" }
+  }
+}
+```
+
+- `ras` – учетные данные для кластера (переопределяют `RAC.Login`/`RAC.Pass` из `settings.yml`).
+- `ibase_default` – логин/пароль по умолчанию для всех информационных баз.
+- `ibases` – переопределения для конкретных баз (ключ – имя базы).
+
+#### Шифрование секретов через экспортер (резервный способ)
+
+Этот способ удобен, но передает открытые секреты по HTTP. Используйте его только в доверенных сетях или как резервный.
+
+```bash
+curl -X POST http://exporter:9091/secrets/encrypt \
+     -H "Content-Type: application/json" \
+     -d @secrets.json --output secrets.json.enc
+```
+
+#### Локальное шифрование (рекомендовано)
+
+Для сред без доступа к экспортеру или при работе в изолированной сети можно использовать bash‑скрипт `encrypt.sh`. Он работает локально, не передавая открытые секреты по сети.
+
+1. Получите публичный ключ экспортера: `curl http://exporter:9091/secrets/pub_key > exporter.pub`
+2. Подготовьте `secrets.json` с открытыми секретами.
+3. Создайте `encrypt.sh` (см. ниже) и выполните `./encrypt.sh secrets.json`. **Внимание**. Это скрипт bash. Для выполнения скрипта в Windows, следует пользоваться консолью bash - например, из поставки клиента Git.
+
+Код `encrypt.sh`:
 
 ```bash
 #!/bin/bash
@@ -253,144 +382,65 @@ rm -f aes_key.bin iv.bin encrypted_key.bin encrypted_data.bin
 echo "Done. Encrypted file: $OUTPUT"
 ```
 
-**Запуск в Windows (Git Bash):**
+**После шифрования** полученный файл `secrets.json.enc` помещается в соответствующую ветку репозитория конфигураций.
 
-1. Откройте Git Bash.
-2. Перейдите в папку с файлами: `cd /c/путь_к_папке`
-3. Запустите: `./encrypt.sh secrets.json`
-4. Полученный файл `secrets.json.enc` отправьте на экспортер командой:
-   ``` bash
-   curl -X POST http://localhost:9091/secrets/set --data-binary @secrets.json.enc
-   ```
+### 4. Автообновление экспортера (self-update)
 
-**Запуск в Linux**
+Экспортер может автоматически обновляться до новой версии, если в GitLab-проекте создан **релиз** с бинарными файлами, имена которых соответствуют шаблону:
 
-Выполняется аналогично. Перед этим необходимо сделать скрипт исполняемым: `chmod +x encrypt.sh`
+- `1C_exporter_linux_amd64`
+- `1C_exporter_windows_amd64.exe`
 
-## 📊 Метрики
+**Процесс обновления:**
 
-### Основные категории
+1. При запуске экспортер проверяет наличие новой версии (по тегу) в указанном проекте.
+2. Если найдена более новая версия, экспортер заменяет свой бинарник и завершается с кодом `1`.
+3. Служба (systemd или Windows SCM) должна быть настроена на автоматический перезапуск после сбоя. После перезапуска экспортер работает уже с новой версией.
 
-| Категория      | Метрики                       | Эндпоинт |
-|----------------|-------------------------------|----------|
-| Системные      | CPU, память, диски             | `/metrics_os` |
-| RAC-метрики    | Лицензии, соединения, сеансы   | `/metrics_rac` |
-| Композиционные | Все метрики                    | `/metrics` |
+**Настройка перезапуска службы:**
 
-### Детализация метрик
-
-| Метрика | Описание | Тип данных |
-|---------|----------|------------|
-| `available_performance` | Доступная производительность хоста | SummaryVec |
-| `sessions_data` | Показатели сессий из кластера 1С | SummaryVec |
-| `session` | Сессии 1С | SummaryVec и/или GaugeVec |
-| `connect` | Соединения 1С | SummaryVec |
-| `client_lic` | Клиентские лицензии 1С | SummaryVec |
-| `shedule_job` | Состояние галки "блокировка регламентных заданий", если галка установлена значение будет 1 иначе 0 или метрика будет отсутствовать | Gauge |
-| `cpu` | Метрики CPU (общий процент загрузки процессора) | SummaryVec |
-| `processes` | Метрики CPU/памяти в разрезе процессов | SummaryVec |
-| `disk` | Показатели дисков | SummaryVec |
-
-## 📈 Примеры запросов PromQL
-
-- Клиентские лицензии:
+- **Windows (sc):**  
+  ```cmd
+  sc failure prometheus_1C_exporter reset= 86400 actions= restart/5000
   ```
-  sum by (licSRV) (client_lic{quantile="0.99", licSRV=~"(?i).+sys.+"})
+- **Linux (systemd):** в файле службы `/etc/systemd/system/1c_exporter.service` добавьте:
+  ```ini
+  [Service]
+  Restart=on-failure
+  RestartSec=5
   ```
 
-- Средняя загрузка CPU:
+### 5. Централизованное управление через GitLab CI/CD
+
+В проекте конфигураций создаются:
+
+- Файл `exporter-vars.yml` с переменными для конкретного экспортера (соответственно, располагать в нужной ветке репозитория):
+  ```yaml
+  variables:
+    SERVER_URL: "http://exporter-host:9091"
+    FILE_TO_UPLOAD: "settings.yml"
+    SECRETS_FILE: "secrets.json.enc"
   ```
-  avg_over_time(cpu{quantile="0.99"} [1m])
-  ```
+- Файл `main-pipeline.yml` – скрипт пайплайна (полный код приведен ниже).
 
-- Загрузка CPU в разрезе процессов:
-  ```
-  topk(10, sum(avg_over_time(processes{quantile="0.99", metrics="cpu"}[1m])) by (procName) )
-  ```
+Пайплайн выполняет следующие задачи:
 
-- Загрузка ОЗУ в разрезе процессов:
-  ```
-  topk(10, sum(avg_over_time(processes{quantile="0.99", metrics="memoryRSS"}[1m])) by (procName) )
-  ```
+- При коммите `settings.yml` в ветку (кроме `main`) – отправляет новый конфиг на `/config/set`.
+- При коммите `secrets.json.enc` или по триггеру от экспортера – отправляет секреты на `/secrets/set`.
+- При создании тега (релиза) – перезапускает все экспортеры через `/shutdown_emulate`.
+- При изменении `main-pipeline.yml` в ветке `main` – копирует его во все остальные ветки.
 
-- Доступная производительность 1С:
-  ```
-  avg_over_time(available_performance{quantile="0.99"}[10m])
-  ```
+**Для работы пайплайна** в проекте GitLab должны быть созданы токены доступа:
 
-- Количество сеансов в 1С:
-  ```
-  session{quantile="0.99"}
-  ```
+- Токен вида Project Access Token (права `api`, `write_repository`, роль Developer)
+- Токен вида Trigger token, создается в настройках CI/CD
 
-- CPU time (консоль 1С)
-  ```
-  rate(sessions_data{quantile="0.99", datatype="cputimetotal"}[5m])
-  ```
+**Для работы пайплайна** в проекте GitLab должны быть определены переменные CI/CD:
 
-## ⚠️ Локализация ошибок
+- `PROJECT_TOKEN` – Хранит токен вида Project Access Token, см.выше
+- `TRIGGER_TOKEN` – Хранит токена вид Trigger token, см.выше
 
-При возникновении проблем проверьте:
-- Доступность RAC-утилиты
-- Права на чтение конфигурационного файла
-- Открытые порты в firewall
-- Логи приложения (режим отладки через установку уровня логирования `LogLevel: 5` в конфигурационном файле)
-
-## 🔄 Интеграция с self-hosted GitLab
-
-Для централизованного управления конфигурацией и секретами экспортер может взаимодействовать с GitLab CI/CD. Это позволяет автоматически обновлять настройки и безопасно доставлять учетные данные для баз 1С.
-
-### 1. Общие настройки
-
-Для работы экспортера в режиме `internal` (внутреннее хранение секретов) и для самообновления используются настройки GitLab. Теперь для всех операций (запуск pipeline, чтение релизов) применяется единый **Personal Access Token** с правами `api`.
-
-### Конфигурация в `settings.yml`
-
-```yaml
-GitLab:
-  GitLabHome: "https://gitlab.example.com"   # базовый URL GitLab (обязательно)
-  ProjectID: 123456                         # ID проекта, где хранятся конфигурации и секреты (обязательно)
-  Branch: "main"                            # ветка, в которой лежат конфигурационные файлы (обязательно)
-  SecretsFile: "secrets.json.enc"           # имя файла с зашифрованными секретами (по умолчанию)
-  AccessToken: "glpat-xxxxxxxxxxxxxxxx"     # Personal Access Token с правами api (обязательно)
-  # ReleasesProjectID: 123456               # опционально: ID проекта для самообновления (если не задан, используется ProjectID)
-```
-
-| Поле | Обязательное | Описание |
-|------|--------------|----------|
-| `GitLabHome` | ✅ | Базовый URL GitLab (например, `https://gitlab.example.com`). |
-| `ProjectID` | ✅ | Числовой ID проекта GitLab, где хранятся конфигурационные файлы и секреты. |
-| `Branch` | ✅ | Ветка репозитория, из которой экспортер будет получать конфигурацию и секреты. |
-| `SecretsFile` | ❌ | Имя файла с зашифрованными секретами (по умолчанию `secrets.json.enc`). |
-| `AccessToken` | ✅ | Personal Access Token с правами `api`. Используется для запуска pipeline (через заголовок `PRIVATE-TOKEN`) и для доступа к релизам при самообновлении. |
-| `ReleasesProjectID` | ❌ | ID проекта GitLab, где хранятся релизы экспортера для самообновления. Если не указан, используется `ProjectID`. |
-
-### Примечания
-
-- Токен должен быть создан в GitLab с правами `api`. Он будет использоваться как для инициации pipeline (чтобы экспортер мог запросить секреты), так и для скачивания новых версий при самообновлении.
-- Если проект с релизами отличается от проекта с конфигурациями, укажите `ReleasesProjectID`. В противном случае оба процесса будут работать с проектом, указанным в `ProjectID`.
-
-Перед настройкой автоматизации выполните следующие шаги:
-
-1. **Создайте отдельный GitLab-проект**, в котором будут храниться конфигурационные файлы для каждого экземпляра экспортера.
-2. **Для каждого экземпляра создайте отдельную ветку** (например, `web`, `rls`, `trade`). В каждой ветке будут находиться:
-   * `settings.yml` – основной конфигурационный файл.
-   * `secrets.json.enc` – зашифрованные секреты (опционально).
-   * `exporter-vars.yml` – файл с переменными для CI/CD (обязателен).
-3. **Содержимое `exporter-vars.yml`**:
-   ```yaml
-   variables:
-     SERVER_URL: "http://server-web:9091"   # базовый URL экспортера (без пути)
-     # FILE_TO_UPLOAD: "settings.yml"       # опционально: имя файла конфигурации, по умолчанию settings.yml
-     # SECRETS_FILE: "secrets.json.enc"     # опционально: имя файла секретов, по умолчанию secrets.json.enc
-   ```
-
-4. **В каждой ветке** создайте файл `main-pipeline.yml` с общим кодом pipeline (см. ниже). Поскольку pipeline берется из текущей ветки, при необходимости можно иметь разные версии, но рекомендуется синхронизировать их через merge из `main`.
-5. **В настройках CI/CD проекта** (Settings → CI/CD → General pipelines) в поле **CI/CD configuration file** (Файл конфигурации CI/CD) укажите имя файла pipeline:  
-   `main-pipeline.yml`  
-   (без указания ветки, так как файл должен присутствовать во всех ветках).
-
-**Содержание `main-pipeline.yml`:**
+#### Полный листинг `main-pipeline.yml`
 
 ```yaml
 include:
@@ -435,7 +485,7 @@ send_secrets:
       if [ ! -f "$SECRETS_FILE" ]; then echo "Secrets file not found"; exit 1; fi
       curl -X POST "$SERVER_URL/secrets/set" --data-binary "@$SECRETS_FILE" --header "TRIGGER-TOKEN: $TRIGGER_TOKEN" --header "PROJECT-TOKEN: $PROJECT_TOKEN" --fail
       echo "Secrets delivered"
-          
+
 restart_exporters:
   stage: restart
   rules:
@@ -461,7 +511,6 @@ restart_exporters:
       for branch in $BRANCHES; do
         echo "Processing branch: $branch"
 
-        # Получаем raw‑содержимое exporter-vars.yml из ветки
         RAW_CONTENT=$(curl --silent --show-error --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/exporter-vars.yml/raw?ref=$branch" \
           --fail 2>&1) || {
@@ -469,7 +518,6 @@ restart_exporters:
             continue
           }
 
-        # Извлекаем SERVER_URL, удаляем комментарии и пробелы
         SERVER_URL=$(echo "$RAW_CONTENT" \
           | grep -E '^[[:space:]]*SERVER_URL:' \
           | sed -E 's/[[:space:]]*#.*//' \
@@ -481,14 +529,12 @@ restart_exporters:
           continue
         fi
 
-        echo "DEBUG: SERVER_URL='$SERVER_URL'"
-
         echo "Restarting exporter for $branch at $SERVER_URL"
         curl -X POST "$SERVER_URL/shutdown_emulate?exit_code=1" \
           --header "TRIGGER-TOKEN: $TRIGGER_TOKEN" --header "PROJECT-TOKEN: $PROJECT_TOKEN" \
           --fail || echo "Failed to restart $branch"
       done
-            
+
 propagate_pipeline:
   stage: propagate
   rules:
@@ -499,8 +545,6 @@ propagate_pipeline:
     - when: never
   script:
     - |
-      # Получаем содержимое файла main-pipeline.yml из текущего коммита (main)
-      # Можно также скачать из API
       curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
         "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml/raw?ref=$CI_COMMIT_SHA" \
         > main-pipeline.yml
@@ -510,7 +554,6 @@ propagate_pipeline:
         exit 1
       fi
 
-      # Получаем список веток (исключая main)
       BRANCHES=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
         "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/branches?per_page=100" \
         | grep -o '"name":"[^"]*"' | sed 's/"name":"//;s/"//' | grep -v '^main$')
@@ -518,21 +561,17 @@ propagate_pipeline:
       for branch in $BRANCHES; do
         echo "Updating main-pipeline.yml in branch $branch"
 
-        # Получаем текущий SHA последнего коммита ветки
         BRANCH_INFO=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/branches/$branch")
         BRANCH_SHA=$(echo "$BRANCH_INFO" | grep -o '"commit":{[^}]*"id":"[^"]*"' | sed 's/.*"id":"\([^"]*\)".*/\1/')
 
-        # Проверяем, существует ли уже файл main-pipeline.yml в ветке
         FILE_INFO=$(curl --silent --write-out "%{http_code}" --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
           "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml?ref=$branch" \
           -o /dev/null 2>&1)
         if [ "$FILE_INFO" = "200" ]; then
-          # Файл существует, нужно получить его SHA для обновления
           FILE_SHA=$(curl --silent --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
             "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/files/main-pipeline.yml?ref=$branch" \
             | grep -o '"last_commit_id":"[^"]*"' | sed 's/"last_commit_id":"//;s/"//')
-          # Создаем коммит с обновлением
           curl --request POST --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
             --form "branch=$branch" \
             --form "commit_message=Update main-pipeline.yml from main" \
@@ -543,7 +582,6 @@ propagate_pipeline:
             "$CI_SERVER_URL/api/v4/projects/$CI_PROJECT_ID/repository/commits" \
             --fail
         else
-          # Файла нет, создаем
           curl --request POST --header "PRIVATE-TOKEN: $PROJECT_TOKEN" \
             --form "branch=$branch" \
             --form "commit_message=Add main-pipeline.yml from main" \
@@ -556,81 +594,304 @@ propagate_pipeline:
       done
 ```
 
-### 2. Обновление конфигурационного файла
+### 6. Выпуск релиза (ручная сборка)
 
-При каждом изменении `settings.yml` (или файла, указанного в `FILE_TO_UPLOAD`) в любой ветке (кроме `main`) автоматически запускается job `upload_file`, который отправляет новый конфиг на экспортер через метод `/config/set`. Экспортер применяет новые настройки без перезапуска.
+Для создания нового релиза (тега) используется набор bat‑скриптов, которые выполняются на рабочей станции разработчика. Они клонируют репозиторий экспортера, собирают бинарники, загружают их в Package Registry GitLab и создают релиз (публикуют тег). Все скрипты должны находиться в одной папке. Ниже приведены их полные листинги.
 
-Для корректной работы убедитесь, что:
-* В файле `exporter-vars.yml` ветки определена переменная `SERVER_URL`.
-* Ветка содержит актуальный `main-pipeline.yml`.
+Для выпуска релиза запустите `_all.bat`.
 
-### 3. Безопасное хранение и доставка секретов
+#### `_all.bat`
 
-Для работы с учетными данными баз 1С (логины/пароли) используется следующий механизм:
+```bat
+@echo off
+setlocal
 
-* **Генерация ключей** – при первом запуске экспортер создает пару RSA-ключей (3072 бит) и сохраняет их в подкаталоге `keys/<host>_<port>/` рядом с исполняемым файлом. Приватный ключ защищен правами доступа (0600).
-* **Шифрование секретов** – администратор может зашифровать секреты с помощью эндпоинта `/secrets/encrypt` или bash-скрипта `encrypt.sh` (см. примеры выше). Формат секретов:
-  ```json
-  {
-    "ras": { "login": "admin", "password": "ras_pass" }, # Опционально. Логин и пароль администратора кластера.
-    "ibase_default": { "login": "default_user", "password": "default_pass" }, # Опционально. Логин и пароль для администрирования, действующий по умолчанию для всех ИБ кластера.
-    "ibases": {
-      "main_db": { "login": "main_user", "password": "main_pass" } # Опционально. Логин и пароль для администрирования, действующий для конкретой ИБ.
-    }
-  }
-  ```
-* **Размещение в GitLab** – зашифрованный файл (например, `secrets.json.enc`) помещается в соответствующую ветку репозитория.
-* **Автоматическая доставка** – при изменении файла зашифрованных секретов в репозитории, или по триггеру от экспортера, запускается задание (job) `send_secrets`, которое отправляет зашифрованные данные на эндпоинт `/secrets/set`. Экспортер расшифровывает их и сохраняет в памяти, а также дублирует на диск для использования при холодном старте.
-* **Запрос секретов экспортером** - происходит, если установлены настройки `DBCredentials.GitLab`. Выполняется при старте экспортера, и периодически, по таймеры (через 2-6 часов). Это может быть полезным, если на момент изменения секретов на GitLab, экспортер не работал (и pipeline не доставил обновленные секреты в экспортер).
-* **Использование секретов** – методы `GetLogPass` и `RAC_Login/Pass` автоматически подставляют полученные учетные данные; если секреты не заданы, используется режим получения секретов из внешнего http-сервиса (режим external).
+rem Если передан параметр --skip-build, устанавливаем SKIP_BUILD=true
+if "%1"=="--skip-build" set SKIP_BUILD=true
 
-**Важно:** При первом запуске после настройки GitLab-режима экспортер не имеет секретов. Администратор должен вручную (или через CI) инициировать первый запуск pipeline, либо дождаться автоматического триггера после коммита файла секретов.
+call 1_config.bat
+if errorlevel 1 exit /b 1
 
-### 4. Автоматическое обновление экспортера (self-update)
-
-Экспортер может самостоятельно обновляться до новой версии, используя GitLab Releases. Механизм работает следующим образом:
-
-- При запуске экспортер проверяет наличие новой версии в GitLab (по тегу). Для этого используется библиотека `go-selfupdate`.
-- Если версия новее текущей, экспортер скачивает подходящий бинарник для своей платформы (Linux/Windows), заменяет себя и завершается с кодом **1**.
-- Внешний менеджер служб (например, Windows `sc` или systemd) должен быть настроен на автоматический перезапуск процесса при ненулевом коде завершения. После перезапуска экспортер работает уже с новой версией.
-
-Для включения этой функции в конфигурацию необходимо добавить поле `ReleasesProjectID` (см. таблицу выше) и указать тот же `AccessToken`, который используется для других операций с GitLab. Если `ReleasesProjectID` не задан, самообновление не будет выполняться.
-
-#### Настройка автоматического перезапуска
-
-**Windows (служба)**
-
-Создайте службу через `sc` и настройте ее перезапуск при сбое:
-
-```cmd
-sc create Prometheus1CExporter binPath= "C:\путь\к\1C_exporter.exe --port=9091 --settings=...\" start= auto
-sc failure Prometheus1CExporter reset= 86400 actions= restart/5000
+call 2_clone_exporter.bat || exit /b 1
+call 3_clone_config.bat || exit /b 1
+call 4_build.bat || exit /b 1
+call 5_upload.bat || exit /b 1
+call 6_create_release.bat || exit /b 1
+echo All done.
 ```
 
-Эта команда будет перезапускать службу через 5 секунд при любом ненулевом коде завершения.
+#### `1_config.bat`
 
-**Linux (systemd)**
+```bat
+@echo off
 
-В файле службы (например, `/etc/systemd/system/1c_exporter.service`) добавьте:
+rem ===== Настройки версии =====
+set VERSION=v1.5.3
 
-```ini
-[Service]
-Restart=on-failure
-RestartSec=5
+rem ===== Настройки репозитория экспортера =====
+set EXPORTER_REPO_URL=https://gitlab.my-company.ru/devops/prometheus_1C_exporter.git
+set EXPORTER_BRANCH=develop
+
+rem ===== Настройки репозитория конфигураций =====
+set CONFIG_REPO_URL=https://gitlab.my-company.ru/devops/1c_exporter_config.git
+set CONFIG_BRANCH=main
+
+rem ===== Настройки GitLab =====
+set GITLAB_URL=gitlab.my-company.ru
+set PROJECT_ID=11
+rem Токен и информация о нем – задаются в 1_config_private.bat
+rem set GITLAB_TOKEN_KEY=
+rem set GITLAB_TOKEN_INFO=
+
+rem ===== Пути для клонирования (относительно текущей папки) =====
+set EXPORTER_LOCAL_DIR=exporter_src
+set CONFIG_LOCAL_DIR=config_src
+
+rem ===== Подключение приватных настроек (токен и переопределения) =====
+if exist 1_config_private.bat call 1_config_private.bat
+
+rem Вывод информации о токене, если задана
+if defined GITLAB_TOKEN_INFO echo Token info: %GITLAB_TOKEN_INFO%
 ```
 
-После этого при завершении экспортера с кодом 1 systemd перезапустит его.
+#### `1_config_private.bat` (приватный, не коммитить)
 
-#### Проверка версии
+```bat
+@echo off
+rem ===== Приватные настройки, дополняющие и/или переопределяющие 1_config.bat =====
+set GITLAB_TOKEN_KEY=glpat-******** 
+set GITLAB_TOKEN_INFO=Project-access token, для проекта конфигураций. Истекает 2026-12-31. Требуется роль Developer, с правами api, write_repository.
 
-Текущая версия экспортера выводится в лог при запуске и доступна на информационной странице `/`.
+rem При необходимости можно переопределить и другие параметры, например:
+rem set PROJECT_ID=987654
+rem set GITLAB_URL=https://gitlab.company.com
+```
 
-## 📌 Примечания
+#### `2_clone_exporter.bat`
 
-*   Для работы с секретами требуется наличие публичного ключа экспортера. Получить его можно через эндпоинт `/secrets/pub_key` (см. примеры выше).
-*   При настройке получения секретов с GitLab, экспортер не требует периодического обновления секретов – они доставляются при каждом изменении файла в репозитории.
-*   При своем старте или перезагрузке, экспортер загружает последние сохраненные секреты с диска. Поэтому после перезапуска он сразу готов к работе, даже если GitLab временно недоступен.
-*   Ветки экспортеров содержат только файлы настроек и переменных; код pipeline хранится в каждой ветке и используется из нее. Для централизованного управления рекомендуется поддерживать `main-pipeline.yml` синхронизированным во всех ветках.
-*   Секреты могут быть загружены в экспортер в любое время, но применяться будут лишь при явной установке режима `DBCredentials.Source=internal`. Установить режим `internal` можно также в любое время - при этом загруженные секреты сразу начнут действовать.
-*   Для инициализации pipeline доставки секретов, требуется, чтобы экспортеру был предоставлен токен запуска конвейера (для проекта Настройки/ CI/CD / Токены запуска конвейера). Автоматизация обработки ротации токена - не предусмотрена.
-*   Самообновление экспортера работает только если указан `ReleasesProjectID` и предоставлен `AccessToken` с правами `api`. Экспортер не обновляется, если запущен в режиме разработки (`version = "dev"`).
+```bat
+@echo off
+setlocal
+call 1_config.bat
+if "%EXPORTER_REPO_URL%"=="" echo EXPORTER_REPO_URL not set & exit /b 1
+if "%EXPORTER_BRANCH%"=="" echo EXPORTER_BRANCH not set & exit /b 1
+if "%EXPORTER_LOCAL_DIR%"=="" echo EXPORTER_LOCAL_DIR not set & exit /b 1
+
+if not exist "%EXPORTER_LOCAL_DIR%" (
+    echo Cloning exporter repository...
+    git clone --branch %EXPORTER_BRANCH% "%EXPORTER_REPO_URL%" "%EXPORTER_LOCAL_DIR%"
+    if errorlevel 1 exit /b 1
+) else (
+    echo Updating exporter repository...
+    cd "%EXPORTER_LOCAL_DIR%"
+    git fetch
+    git checkout %EXPORTER_BRANCH%
+    if errorlevel 1 (
+        echo Failed to checkout branch %EXPORTER_BRANCH%
+        exit /b 1
+    )
+    git pull
+    cd ..
+)
+echo Current branch in %EXPORTER_LOCAL_DIR%:
+cd "%EXPORTER_LOCAL_DIR%"
+git branch --show-current
+cd ..
+echo Done.
+```
+
+#### `3_clone_config.bat`
+
+```bat
+@echo off
+setlocal
+call 1_config.bat
+if "%CONFIG_REPO_URL%"=="" echo CONFIG_REPO_URL not set & exit /b 1
+if "%CONFIG_BRANCH%"=="" echo CONFIG_BRANCH not set & exit /b 1
+if "%CONFIG_LOCAL_DIR%"=="" echo CONFIG_LOCAL_DIR not set & exit /b 1
+
+if not exist "%CONFIG_LOCAL_DIR%" (
+    echo Cloning config repository...
+    git clone --branch %CONFIG_BRANCH% "%CONFIG_REPO_URL%" "%CONFIG_LOCAL_DIR%"
+) else (
+    echo Updating config repository...
+    cd "%CONFIG_LOCAL_DIR%"
+    git fetch
+    git checkout %CONFIG_BRANCH%
+    git pull
+    cd ..
+)
+echo Done.
+```
+
+#### `4_build.bat`
+
+```bat
+@echo off
+setlocal
+call 1_config.bat
+if "%EXPORTER_LOCAL_DIR%"=="" echo EXPORTER_LOCAL_DIR not set & exit /b 1
+if "%VERSION%"=="" echo VERSION not set & exit /b 1
+
+set BUILD_DIR=executables
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+
+cd "%EXPORTER_LOCAL_DIR%"
+
+for /f "delims=" %%i in ('git rev-parse --short HEAD') do set SHORT_COMMIT=%%i
+
+echo Building for Linux...
+set GOOS=linux
+set GOARCH=amd64
+set CGO_ENABLED=0
+go build -ldflags="-s -w -X main.version=%VERSION% -X main.gitCommit=%SHORT_COMMIT%" -trimpath -o ..\%BUILD_DIR%\1C_exporter_linux_amd64 .
+
+echo Building for Windows...
+set GOOS=windows
+set GOARCH=amd64
+set CGO_ENABLED=0
+go build -ldflags="-s -w -X main.version=%VERSION% -X main.gitCommit=%SHORT_COMMIT%" -trimpath -o ..\%BUILD_DIR%\1C_exporter_windows_amd64.exe .
+
+rem Переходим в папку с бинарниками (без лишнего пробела)
+cd ..\%BUILD_DIR%
+
+echo Generating checksums...
+if exist checksums.txt del checksums.txt
+(for %%f in (1C_exporter_*) do (
+    certutil -hashfile "%%f" SHA256 | findstr /v "certutil" >> checksums.tmp
+))
+ren checksums.tmp checksums.txt
+
+echo Build completed.
+```
+
+#### `5_upload.bat`
+
+```bat
+@echo off
+setlocal
+call 1_config.bat
+if "%VERSION%"=="" echo VERSION not set & exit /b 1
+if "%GITLAB_TOKEN_KEY%"=="" echo GITLAB_TOKEN_KEY not set & exit /b 1
+if "%PROJECT_ID%"=="" echo PROJECT_ID not set & exit /b 1
+if "%GITLAB_URL%"=="" echo GITLAB_URL not set & exit /b 1
+
+set SCRIPT_DIR=%~dp0
+set BUILD_DIR=%SCRIPT_DIR%executables
+set LOCAL_DIR=%SCRIPT_DIR%%EXPORTER_LOCAL_DIR%
+
+rem Проверяем наличие бинарников сначала в BUILD_DIR, затем в LOCAL_DIR
+set SOURCE_DIR=
+if exist "%BUILD_DIR%\1C_exporter_linux_amd64" (
+    if exist "%BUILD_DIR%\1C_exporter_windows_amd64.exe" (
+        set SOURCE_DIR=%BUILD_DIR%
+        echo Using binaries from %BUILD_DIR%
+    )
+)
+if "%SOURCE_DIR%"=="" (
+    if exist "%LOCAL_DIR%\1C_exporter_linux_amd64" (
+        if exist "%LOCAL_DIR%\1C_exporter_windows_amd64.exe" (
+            set SOURCE_DIR=%LOCAL_DIR%
+            echo Using binaries from %LOCAL_DIR%
+        )
+    )
+)
+if "%SOURCE_DIR%"=="" (
+    echo No binaries found in %BUILD_DIR% or %LOCAL_DIR%
+    exit /b 1
+)
+
+cd "%SOURCE_DIR%"
+
+rem Если checksums.txt отсутствует, генерируем его на основе бинарников
+if not exist checksums.txt (
+    echo Checksums.txt not found, generating...
+    if exist checksums.tmp del checksums.tmp
+    for %%f in (1C_exporter_*) do (
+        certutil -hashfile "%%f" SHA256 | findstr /v "certutil" >> checksums.tmp
+    )
+    ren checksums.tmp checksums.txt
+)
+
+echo Uploading Linux binary...
+curl --fail --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" --upload-file 1C_exporter_linux_amd64 "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/1C_exporter_linux_amd64"
+if errorlevel 1 exit /b 1
+
+echo Uploading Windows binary...
+curl --fail --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" --upload-file 1C_exporter_windows_amd64.exe "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/1C_exporter_windows_amd64.exe"
+if errorlevel 1 exit /b 1
+
+echo Uploading checksums...
+curl --fail --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" --upload-file checksums.txt "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/checksums.txt"
+if errorlevel 1 exit /b 1
+
+echo Upload completed.
+```
+
+#### `6_create_release.bat`
+
+```bat
+@echo off
+setlocal
+call 1_config.bat
+if "%VERSION%"=="" echo VERSION not set & exit /b 1
+if "%GITLAB_TOKEN_KEY%"=="" echo GITLAB_TOKEN_KEY not set & exit /b 1
+if "%PROJECT_ID%"=="" echo PROJECT_ID not set & exit /b 1
+if "%GITLAB_URL%"=="" echo GITLAB_URL not set & exit /b 1
+if "%CONFIG_BRANCH%"=="" echo CONFIG_BRANCH not set & exit /b 1
+if "%CONFIG_LOCAL_DIR%"=="" echo CONFIG_LOCAL_DIR not set & exit /b 1
+
+cd "%CONFIG_LOCAL_DIR%"
+
+rem Получаем commit ID текущей ветки
+for /f "delims=" %%i in ('git rev-parse HEAD') do set COMMIT_ID=%%i
+echo Using commit ID: %COMMIT_ID%
+
+rem Проверяем, существует ли уже тег
+curl --silent --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/repository/tags/%VERSION%" > tag.json
+findstr /c:"\"name\":\"%VERSION%\"" tag.json >nul
+if errorlevel 1 (
+    echo Creating tag %VERSION%...
+    curl --request POST --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/repository/tags" --form "tag_name=%VERSION%" --form "ref=%COMMIT_ID%" --fail
+    if errorlevel 1 (
+        echo Tag creation failed
+        del tag.json
+        exit /b 1
+    )
+) else (
+    echo Tag %VERSION% already exists.
+)
+del tag.json
+
+echo Creating release...
+curl --request POST --header "PRIVATE-TOKEN: %GITLAB_TOKEN_KEY%" "%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/releases" ^
+    --form "tag_name=%VERSION%" ^
+    --form "description=Release %VERSION%" ^
+    --form "assets[links][][name]=Linux AMD64" ^
+    --form "assets[links][][url]=%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/1C_exporter_linux_amd64" ^
+    --form "assets[links][][link_type]=package" ^
+    --form "assets[links][][name]=Windows AMD64" ^
+    --form "assets[links][][url]=%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/1C_exporter_windows_amd64.exe" ^
+    --form "assets[links][][link_type]=package" ^
+    --form "assets[links][][name]=Checksums" ^
+    --form "assets[links][][url]=%GITLAB_URL%/api/v4/projects/%PROJECT_ID%/packages/generic/1C_exporter/%VERSION%/checksums.txt" ^
+    --form "assets[links][][link_type]=other" || exit /b 1
+
+echo Release created.
+```
+
+### 7. Обновление токенов
+
+Поддержка автоматической ротации токенов достигается тем, что при каждом вызове любого HTTP‑метода экспортера (через пайплайн) токены передаются в заголовках `TRIGGER-TOKEN` и `PROJECT-TOKEN`. Экспортер сохраняет их в файл `tokens.yml`, поэтому для смены токена достаточно обновить переменные CI/CD в проекте GitLab – при следующем взаимодействии токены на всех экспортерах будут обновлены автоматически.
+
+## ⚠️ Локализация ошибок
+
+При возникновении проблем проверьте:
+
+- Доступность RAC-утилиты
+- Права на чтение конфигурационного файла
+- Открытые порты в firewall
+- Логи приложения (режим отладки через `LogLevel: 5`)
+- Наличие файла `tokens.yml` и правильность токенов (если используется GitLab)
+- Права на запись в папку с бинарником (для автообновления)
+- Доступность GitLab API (проверьте через `curl` с теми же токенами)

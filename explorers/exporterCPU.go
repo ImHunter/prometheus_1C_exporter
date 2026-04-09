@@ -65,10 +65,6 @@ func (exp *CPU) Collect(ch chan<- prometheus.Metric) {
 	exp.summary.Collect(ch)
 }
 
-// func (exp *CPU) GetName() string {
-// 	return "cpu"
-// }
-
 func (exp *CPU) GetType() model.MetricType {
 	return model.TypeOS
 }
