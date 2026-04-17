@@ -132,8 +132,10 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 			for db := range chanIn {
 				baseinfo, err := exp.getInfoBase(db.guid, db.name)
 				if err != nil {
+					exp.logger.With("dbguid", db.guid, "dbname", db.name).Errorf("Ошибка получения данных: %v", err)
 					atomic.StoreInt32(&hasError, 1)
 				} else {
+					exp.logger.With("dbguid", db.guid, "dbname", db.name).Debug("Успешно получены данные")
 					lv := newLabeledValues()
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
