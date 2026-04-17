@@ -66,6 +66,13 @@ func (exp *ExporterAvailablePerformance) getData() (result []map[string]interfac
 		exp.formatMultiResult(sourceData, &procData)
 	}
 
+	orDefault := func(value, defaultValue string) string {
+		if value == "" {
+			return defaultValue
+		}
+		return value
+	}
+
 	clusterID := exp.GetClusterID()
 	for _, item := range procData {
 		tmp := make(map[string]float64)
@@ -111,7 +118,7 @@ func (exp *ExporterAvailablePerformance) getData() (result []map[string]interfac
 				"pid":     item["pid"],
 				"running": item["running"],
 				"use":     item["use"],
-				"reserve": item["reserve"],
+				"reserve": orDefault(item["reserve"], "no"), // На 8.3.10 нет такого ключа, применим значение по умолчанию.
 				"cluster": clusterID,
 				"type":    k,
 				"value":   v,
@@ -149,10 +156,6 @@ func (exp *ExporterAvailablePerformance) Collect(ch chan<- prometheus.Metric) {
 	exp.getValue()
 	exp.summary.Collect(ch)
 }
-
-// func (exp *ExporterAvailablePerformance) GetName() string {
-// 	return "available_performance"
-// }
 
 func (exp *ExporterAvailablePerformance) GetType() model.MetricType {
 	return model.TypeRAC
