@@ -66,6 +66,7 @@ func (exp *ExporterAvailablePerformance) getData() (result []map[string]interfac
 		exp.formatMultiResult(sourceData, &procData)
 	}
 
+	// По-хорошему, унести в Utils. Но такого пакета пока не создано.
 	orDefault := func(value, defaultValue string) string {
 		if value == "" {
 			return defaultValue
