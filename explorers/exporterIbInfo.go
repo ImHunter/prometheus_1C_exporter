@@ -71,17 +71,21 @@ func (exp *ExporterInfobaseInfo) getValue() {
 	exp.logger.Info("получение данных экспортера")
 
 	exp.gauge.Reset()
-	var gVal *int64
+	var iVal *int64
+	var gVal float64
+
 	if err := exp.getData(); err == nil {
 		for _, lv := range exp.buff.data() {
 			for _, mp := range exp.meterParams {
-				gVal = lv.metersData[mp.Name]
-				if gVal == nil {
+				iVal = lv.metersData[mp.Name]
+				if iVal == nil {
 					continue
+				} else {
+					gVal = float64(*iVal)
 				}
 				with := lv.GetWith("base")
 				with["datatype"] = mp.Name
-				exp.gauge.With(with).Set(float64(*gVal))
+				exp.gauge.With(with).Set(gVal)
 			}
 		}
 	} else {
@@ -99,6 +103,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 	}
 
 	if !exp.isAllowedReading() {
+		exp.logger.Warn("Чтение %s приостановлено", exp.GetName())
 		return nil
 	}
 
@@ -115,6 +120,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 	chanOut := make(chan *dbinfo, len(currentBases))
 
 	var hasError int32
+	var hasSuccess int32
 	var wg sync.WaitGroup
 
 	// Воркеры
@@ -130,20 +136,53 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 			}()
 
 			for db := range chanIn {
-				baseinfo, err := exp.getInfoBase(db.guid, db.name)
-				if err != nil {
-					exp.logger.With("dbguid", db.guid, "dbname", db.name).Errorf("Ошибка получения данных: %v", err)
-					atomic.StoreInt32(&hasError, 1)
-				} else {
+				type infoResult struct {
+					baseinfo map[string]string
+					err      error
+				}
+				resultCh := make(chan infoResult, 1)
+
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							resultCh <- infoResult{err: fmt.Errorf("паника в getInfoBase: %v", r)}
+						}
+					}()
+					bi, e := exp.getInfoBase(db.guid, db.name) // старый вызов без контекста
+					resultCh <- infoResult{bi, e}
+				}()
+
+				var baseinfo map[string]string
+				var err error
+
+				select {
+				case res := <-resultCh:
+					baseinfo, err = res.baseinfo, res.err
+				case <-time.After(10 * time.Second):
+					err = fmt.Errorf("превышено время ожидания (10 с) для базы %s", db.name)
+				}
+
+				lv := newLabeledValues()
+				if err == nil {
+					atomic.StoreInt32(&hasSuccess, 1)
 					exp.logger.With("dbguid", db.guid, "dbname", db.name).Debug("Успешно получены данные")
-					lv := newLabeledValues()
 					lv.labelsData["base"] = db.name
 					lv.labelsData["guid"] = db.guid
 					lv.readMeterValues(&baseinfo, exp.meterParams)
 					lv.applyToCollection(exp.buff, exp.meterParams)
-					db.lv = *lv
-					chanOut <- db
+				} else {
+					undefinedVal := int64(-1)
+					atomic.StoreInt32(&hasError, 1)
+					exp.logger.With("dbguid", db.guid, "dbname", db.name).Debug("Ошибка при получении данных")
+					lv.labelsData["base"] = db.name
+					lv.labelsData["guid"] = db.guid
+					lv.metersData["scheduledjobsdeny"] = &undefinedVal
+					lv.metersData["sessionsdeny"] = &undefinedVal
+					lv.applyToCollection(exp.buff, exp.meterParams)
 				}
+
+				db.lv = *lv
+				chanOut <- db
 			}
 		}()
 	}
@@ -172,7 +211,7 @@ func (exp *ExporterInfobaseInfo) getData() (err error) {
 	}
 
 	// Единое применение задержки
-	if atomic.LoadInt32(&hasError) == 1 {
+	if atomic.LoadInt32(&hasError) == 1 && atomic.LoadInt32(&hasSuccess) == 0 {
 		exp.setAllowedReading(false)
 	} else {
 		exp.setAllowedReading(true)
