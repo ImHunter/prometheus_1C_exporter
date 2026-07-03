@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -63,6 +64,9 @@ func (lv *labeledValues) applyToCollection(buff *labeledValuesCollection, meterP
 		panic(fmt.Sprintf("%v", err))
 	}
 
+	buff.mu.Lock()
+	defer buff.mu.Unlock()
+
 	bufferData := buff.data()[buffKey]
 	if bufferData == nil {
 		buff.dataMap[buffKey] = lv
@@ -101,6 +105,7 @@ func (lv *labeledValues) clear() {
 type labeledValuesMapKey [3]string
 type labeledValuesMap map[labeledValuesMapKey]*labeledValues
 type labeledValuesCollection struct {
+	mu        sync.Mutex
 	dataMap   labeledValuesMap
 	keyFields []string
 }
